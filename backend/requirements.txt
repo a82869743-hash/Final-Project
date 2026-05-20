@@ -1,0 +1,18 @@
+fastapi==0.115.12
+uvicorn==0.34.2
+websockets==14.0
+python-multipart==0.0.20
+xgboost==3.0.0
+scikit-learn==1.6.1
+numpy==2.2.4
+joblib==1.4.2
+openai==1.78.1
+pydantic==2.11.1
+supabase==2.15.0
+shap==0.45.0
+pandas==2.2.3
+python-dotenv==1.1.0
+requests==2.32.3
+# ── Video Intelligence Module (optional — graceful fallback if absent) ──
+opencv-python-headless==4.10.0.84
+ultralytics==8.3.52

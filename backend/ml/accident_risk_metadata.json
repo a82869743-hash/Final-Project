@@ -1,0 +1,43 @@
+{
+    "model_version": "accident_risk_v1.0",
+    "accuracy": 0.3495,
+    "n_classes": 3,
+    "class_mapping": {
+        "0": "Low",
+        "1": "Medium",
+        "2": "High"
+    },
+    "features": [
+        "latitude",
+        "longitude",
+        "traffic_density",
+        "accident_history",
+        "time_of_day",
+        "weather"
+    ],
+    "feature_means": {
+        "latitude": 24.011098771411646,
+        "longitude": 75.01102272367578,
+        "traffic_density": 2.0034,
+        "accident_history": 1.06355,
+        "time_of_day": 1.58395,
+        "weather": 1.0076
+    },
+    "feature_stds": {
+        "latitude": 2.310921748324702,
+        "longitude": 2.888318865918959,
+        "traffic_density": 0.8161832477313824,
+        "accident_history": 0.2517200460323718,
+        "time_of_day": 1.1868182720788694,
+        "weather": 0.8167367485750301
+    },
+    "timestamp": "2026-04-28T18:53:52.505579",
+    "feature_importance": {
+        "latitude": 0.04133642092347145,
+        "longitude": 0.04061798378825188,
+        "traffic_density": 0.03505542129278183,
+        "accident_history": 0.8089373707771301,
+        "time_of_day": 0.035939283668994904,
+        "weather": 0.03811349347233772
+    }
+}

@@ -28,59 +28,74 @@ const navItems = [
   { label: "Settings", href: "/settings", icon: Settings },
 ];
 
-type SystemState = "online" | "degraded" | "offline" | "checking";
+type SystemState = "online" | "degraded" | "offline" | "checking" | "connecting";
 
 const stateConfig: Record<SystemState, { color: string; bg: string; label: string }> = {
   online: { color: "#16a34a", bg: "rgba(22,163,74,0.06)", label: "All Systems Online" },
   degraded: { color: "#d97706", bg: "rgba(217,119,6,0.06)", label: "Partially Degraded" },
   offline: { color: "#dc2626", bg: "rgba(220,38,38,0.06)", label: "Backend Offline" },
   checking: { color: "#64748b", bg: "rgba(100,116,139,0.04)", label: "Checking..." },
+  connecting: { color: "#0ea5e9", bg: "rgba(14,165,233,0.06)", label: "Connecting to Tactical Services..." },
 };
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const [systemState, setSystemState] = useState<SystemState>("checking");
+  const [systemState, setSystemState] = useState<SystemState>("connecting");
   const [serviceCount, setServiceCount] = useState("—");
 
   useEffect(() => {
-    async function checkHealth() {
-      setSystemState("checking");
-      try {
-        // Render free tier cold starts can take ~30s; use generous timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000);
-        const res = await fetch(
-          (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api") + "/health",
-          { cache: "no-store", signal: controller.signal }
-        );
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          const data = await res.json();
-          const statuses = Object.values(data) as { status: string }[];
-          const onlineCount = statuses.filter((s) => s.status === "online").length;
-          const total = statuses.length;
-          setServiceCount(`${onlineCount}/${total}`);
+    let cancelled = false;
 
-          if (onlineCount === total) {
-            setSystemState("online");
-          } else if (onlineCount > 0) {
-            setSystemState("degraded");
-          } else {
-            setSystemState("offline");
+    async function checkHealth(retries = 3) {
+      if (cancelled) return;
+
+      // Show "connecting" on first attempt, "checking" on subsequent refreshes
+      if (retries === 3) {
+        setSystemState((prev) => prev === "online" || prev === "degraded" ? "checking" : "connecting");
+      }
+
+      for (let attempt = 0; attempt < retries; attempt++) {
+        if (cancelled) return;
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 35000);
+          const res = await fetch(
+            (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api") + "/health",
+            { cache: "no-store", signal: controller.signal }
+          );
+          clearTimeout(timeoutId);
+
+          if (res.ok) {
+            const data = await res.json();
+            const statuses = Object.values(data) as { status: string }[];
+            const onlineCount = statuses.filter((s) => s.status === "online").length;
+            const total = statuses.length;
+            if (!cancelled) {
+              setServiceCount(`${onlineCount}/${total}`);
+              if (onlineCount === total) setSystemState("online");
+              else if (onlineCount > 0) setSystemState("degraded");
+              else setSystemState("offline");
+            }
+            return; // Success — stop retrying
           }
-        } else {
-          setSystemState("offline");
-          setServiceCount("0/4");
+        } catch {
+          // Retry after exponential backoff (3s, 6s, 12s)
+          if (attempt < retries - 1) {
+            await new Promise((r) => setTimeout(r, 3000 * Math.pow(2, attempt)));
+          }
         }
-      } catch {
+      }
+
+      // All retries exhausted
+      if (!cancelled) {
         setSystemState("offline");
         setServiceCount("0/4");
       }
     }
 
     checkHealth();
-    const interval = setInterval(checkHealth, 30000); // Re-check every 30s
-    return () => clearInterval(interval);
+    const interval = setInterval(() => checkHealth(), 30000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   const state = stateConfig[systemState];
@@ -140,7 +155,7 @@ export default function Sidebar() {
         style={{ backgroundColor: state.bg }}
       >
         <div className="flex items-center gap-2 mb-1.5">
-          {systemState === "checking" ? (
+          {systemState === "checking" || systemState === "connecting" ? (
             <Loader2 className="h-3 w-3 animate-spin" style={{ color: state.color }} />
           ) : (
             <span
@@ -152,9 +167,15 @@ export default function Sidebar() {
             {state.label}
           </span>
         </div>
-        <p className="text-[10px] text-[var(--color-on-surface-muted)] font-medium">
-          Services: <span className="text-[var(--color-on-surface)] font-bold">{serviceCount}</span>
-        </p>
+        {systemState === "connecting" ? (
+          <p className="text-[10px] text-[var(--color-on-surface-muted)] font-medium">
+            Initializing AI Tactical Services...
+          </p>
+        ) : (
+          <p className="text-[10px] text-[var(--color-on-surface-muted)] font-medium">
+            Services: <span className="text-[var(--color-on-surface)] font-bold">{serviceCount}</span>
+          </p>
+        )}
       </div>
     </aside>
   );

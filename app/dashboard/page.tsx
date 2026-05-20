@@ -27,7 +27,7 @@ import AlertsList from "@/components/ui/AlertsList";
 import ActivityFeed from "@/components/ui/ActivityFeed";
 import PremiumAnalytics from "@/components/dashboard/PremiumAnalytics";
 import RadioScanner from "@/components/dashboard/RadioScanner";
-import { api, type DashboardStats, type Alert, type Vehicle, type PredictionResponse, type AnalyticsStats, type RiskZone } from "@/lib/api";
+import { api, connectVehicleWS, disconnectVehicleWS, type DashboardStats, type Alert, type Vehicle, type PredictionResponse, type AnalyticsStats, type RiskZone } from "@/lib/api";
 
 import { useDispatchContext } from "@/components/providers/DispatchProvider";
 
@@ -81,6 +81,28 @@ export default function DashboardPage() {
       } catch (err) {
         console.warn("Dashboard: backend unreachable —", err);
         setError(true);
+
+        // ── Demo fallback: populate with simulation data if backend is down ──
+        if (!stats) {
+          setStats({ active_ambulances: 6, avg_response_time: 4.2, incidents_today: 12, critical_alerts: 3 });
+        }
+        if (alerts.length === 0) {
+          setAlerts([
+            { id: "demo-1", severity: "critical", title: "Multi-vehicle collision", location: "NH-48 Vadodara", time: "2 min ago" },
+            { id: "demo-2", severity: "warning", title: "Fire reported", location: "Industrial Zone B", time: "5 min ago" },
+            { id: "demo-3", severity: "info", title: "Medical emergency", location: "Alkapuri Sector 7", time: "8 min ago" },
+          ]);
+        }
+        if (vehicles.length === 0) {
+          setVehicles([
+            { id: "demo-v1", name: "AMB-101", lat: 22.3072, lng: 73.1812, status: "available", speed: 0, heading: 45, driver: "R. Patel", destination: "Base" },
+            { id: "demo-v2", name: "AMB-102", lat: 22.3190, lng: 73.1945, status: "en_route", speed: 62, heading: 180, driver: "S. Kumar", destination: "NH-48 Vadodara" },
+            { id: "demo-v3", name: "AMB-103", lat: 22.2950, lng: 73.2050, status: "on_scene", speed: 0, heading: 90, driver: "M. Shah", destination: "Industrial Zone B" },
+          ]);
+        }
+        if (!analytics) {
+          setAnalytics({ total_dispatches: 47, avg_eta: 4.2, active_vehicles: 6, high_risk_zones: 3 });
+        }
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -131,40 +153,17 @@ export default function DashboardPage() {
       .catch((err) => console.warn("Risk zones unavailable:", err));
   }, []);
 
-  // Raw WebSocket connection for live vehicle testing
+  // Resilient WebSocket with auto-reconnection for live vehicle feed
   useEffect(() => {
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://127.0.0.1:8000/ws";
-    const ws = new WebSocket(wsUrl);
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        
-        setVehicles((prev) => {
-          if (Array.isArray(data)) {
-            return data;
-          }
-          if (data && typeof data === 'object' && data.id) {
-            const idx = prev.findIndex(v => v.id === data.id);
-            if (idx !== -1) {
-              const updated = [...prev];
-              updated[idx] = { ...updated[idx], ...data };
-              return updated;
-            }
-            return [...prev, data as Vehicle];
-          }
-          return prev;
-        });
-      } catch (err) {
-        console.error("WebSocket message error:", err);
-      }
-    };
-
-    ws.onerror = (err) => {
-      console.error("WebSocket error:", err);
-    };
-
-    return () => ws.close();
+    connectVehicleWS(
+      (updatedVehicles) => {
+        setVehicles(updatedVehicles);
+      },
+      () => {
+        // Silent reconnect — handled by connectVehicleWS's backoff logic
+      },
+    );
+    return () => disconnectVehicleWS();
   }, []);
 
   // Compute Dispatch Logic
@@ -277,8 +276,16 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* ── Error Banner ── */}
-      {error && (
+      {/* ── Loading / Error Banner ── */}
+      {loading && error && (
+        <div className="flex items-center gap-3 rounded-[var(--radius-md)] bg-[rgba(14,165,233,0.06)] px-4 py-3 animate-fade-in border border-[rgba(14,165,233,0.15)]">
+          <div className="h-4 w-4 border-2 border-[#0ea5e9] border-t-transparent rounded-full animate-spin shrink-0" />
+          <span className="flex-1 text-[12px] font-medium text-[#0ea5e9]">
+            Initializing AI Tactical Services — Connecting to Sentinel Command Network...
+          </span>
+        </div>
+      )}
+      {!loading && error && (
         <div className="flex items-center gap-3 rounded-[var(--radius-md)] bg-[rgba(239,68,68,0.06)] px-4 py-3 animate-fade-in">
           <WifiOff className="h-4 w-4 text-[var(--color-error)] shrink-0" />
           <span className="flex-1 text-[12px] font-medium text-[var(--color-error)]">

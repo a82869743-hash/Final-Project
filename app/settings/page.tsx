@@ -137,7 +137,7 @@ export default function SettingsPage() {
       await new Promise<void>((resolve, reject) => {
         ws.onopen = () => { resolve(); ws.close(); };
         ws.onerror = () => reject();
-        setTimeout(reject, 3000);
+        setTimeout(reject, 10000);
       });
       updated[2] = { ...updated[2], status: "online", latency: "Connected" };
     } catch {

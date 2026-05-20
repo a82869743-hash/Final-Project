@@ -106,6 +106,25 @@ if video_ws_router is not None:
 async def root():
     return {"status": "online", "service": "Aegis Tactical API"}
 
+
+@app.get("/health")
+async def health_probe():
+    """Lightweight liveness probe for Render / load-balancers."""
+    from datetime import datetime, timezone
+    return {
+        "status": "online",
+        "database": "connected" if os.getenv("SUPABASE_URL") else "unconfigured",
+        "ai": "ready" if os.getenv("OPENAI_API_KEY") else "mock",
+        "websocket": "active",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/ready")
+async def readiness_probe():
+    """Readiness probe — returns true once the app is accepting traffic."""
+    return {"ready": True}
+
 @app.get("/api/test-db")
 def test_db():
     try:

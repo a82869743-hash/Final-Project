@@ -69,17 +69,13 @@ app = FastAPI(
     description="AI-powered emergency dispatch command center backend",
 )
 
-# ── CORS — allow all Next.js dev server variants ──
+# ── CORS — allow all origins for deployment ──
+# NOTE: allow_credentials must be False when using wildcard origins
+# This is safe for our use case (no cookie-based auth; we use Supabase tokens)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "*",  # Allow all origins for deployed demo
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

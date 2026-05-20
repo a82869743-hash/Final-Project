@@ -46,10 +46,14 @@ export default function Sidebar() {
     async function checkHealth() {
       setSystemState("checking");
       try {
+        // Render free tier cold starts can take ~30s; use generous timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
         const res = await fetch(
           (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api") + "/health",
-          { cache: "no-store" }
+          { cache: "no-store", signal: controller.signal }
         );
+        clearTimeout(timeoutId);
         if (res.ok) {
           const data = await res.json();
           const statuses = Object.values(data) as { status: string }[];

@@ -180,7 +180,7 @@ export default function AegisCopilot() {
       setMessages(prev => [...prev, { 
         id: `msg-${Date.now()}`, 
         sender: "aegis", 
-        text: "⚠️ Connection to Aegis Intelligence Core failed. Ensure the backend is running at http://127.0.0.1:8000." 
+        text: "⚠️ Connection to Aegis Intelligence Core unavailable. The AI backend may be initializing — please retry in a few seconds." 
       }]);
     } finally {
       setIsTyping(false);

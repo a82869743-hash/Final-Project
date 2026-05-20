@@ -133,7 +133,8 @@ export default function DashboardPage() {
 
   // Raw WebSocket connection for live vehicle testing
   useEffect(() => {
-    const ws = new WebSocket("ws://127.0.0.1:8000/ws");
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://127.0.0.1:8000/ws";
+    const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
       try {

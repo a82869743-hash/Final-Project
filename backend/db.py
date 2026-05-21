@@ -1,20 +1,32 @@
 import os
+import time
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-supabase = None
-if SUPABASE_URL and SUPABASE_KEY:
-    try:
-        from supabase import create_client
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e:
-        print("Supabase client initialization error:", e)
-else:
-    print("Warning: Missing Supabase environment variables. Database logging disabled.")
+_supabase_client = None
+_supabase_initialized = False
+
+def get_supabase():
+    global _supabase_client, _supabase_initialized
+    if _supabase_initialized:
+        return _supabase_client
+    
+    _supabase_initialized = True
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            from supabase import create_client, ClientOptions
+            _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(postgrest_client_timeout=10, schema="public"))
+        except Exception as e:
+            print("Supabase client initialization error:", e)
+    else:
+        print("Warning: Missing Supabase environment variables. Database logging disabled.")
+    
+    return _supabase_client
 
 def upsert_vehicle(vehicle: dict):
-    if not supabase:
+    client = get_supabase()
+    if not client:
         return None
     data = {
         "id": vehicle["id"],
@@ -22,11 +34,12 @@ def upsert_vehicle(vehicle: dict):
         "lng": vehicle["lng"],
         "status": vehicle["status"],
     }
-    response = supabase.table("vehicles").upsert(data).execute()
+    response = client.table("vehicles").upsert(data).execute()
     return response
 
 def insert_vehicle_history(vehicle: dict):
-    if not supabase:
+    client = get_supabase()
+    if not client:
         return None
     data = {
         "vehicle_id": vehicle["id"],
@@ -34,10 +47,11 @@ def insert_vehicle_history(vehicle: dict):
         "lng": vehicle["lng"],
         "status": vehicle["status"],
     }
-    return supabase.table("vehicle_history").insert(data).execute()
+    return client.table("vehicle_history").insert(data).execute()
 
 def log_dispatch(vehicle: dict, hotspot: dict, prediction: dict, eta: float):
-    if not supabase:
+    client = get_supabase()
+    if not client:
         return None
         
     try:
@@ -52,19 +66,20 @@ def log_dispatch(vehicle: dict, hotspot: dict, prediction: dict, eta: float):
             "eta": eta
         }
 
-        return supabase.table("dispatch_logs").insert(data).execute()
+        return client.table("dispatch_logs").insert(data).execute()
     except Exception as e:
         print("Dispatch log error:", e)
         return None
 
 def count_recent_incidents(lat: float, lng: float, threshold_deg: float = 0.05) -> int:
     """Helper to count how many recent incidents happen around a coordinate"""
-    if not supabase:
+    client = get_supabase()
+    if not client:
         return 0
     try:
         from datetime import datetime
         now_str = datetime.utcnow().isoformat()
-        res = supabase.table("dispatch_logs").select("hotspot_lat,hotspot_lng").lt("timestamp", now_str).execute()
+        res = client.table("dispatch_logs").select("hotspot_lat,hotspot_lng").lt("timestamp", now_str).execute()
         if not res.data:
             return 0
             
@@ -80,7 +95,8 @@ def count_recent_incidents(lat: float, lng: float, threshold_deg: float = 0.05) 
         return 0
 
 def insert_prediction(data: dict):
-    if not supabase:
+    client = get_supabase()
+    if not client:
         return None
     try:
         record = {
@@ -97,7 +113,7 @@ def insert_prediction(data: dict):
             "model_version": data.get("model_version", "v2.0"),
             "drift_detected": data.get("drift_detected", False)
         }
-        return supabase.table("predictions").insert(record).execute()
+        return client.table("predictions").insert(record).execute()
     except Exception as e:
         print("Failed to save prediction:", e)
         return None

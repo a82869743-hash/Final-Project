@@ -97,7 +97,7 @@ export default function SettingsPage() {
       // 3. WebSocket connectivity
       new Promise<boolean>((resolve) => {
         try {
-          const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "wss://final-project-qly6.onrender.com/ws";
+          const wsUrl = "ws://127.0.0.1:8000/ws";
           const ws = new WebSocket(wsUrl);
           const timer = setTimeout(() => { try { ws.close(); } catch {} resolve(false); }, 8000);
           ws.onopen = () => { clearTimeout(timer); ws.close(); resolve(true); };
@@ -308,12 +308,12 @@ export default function SettingsPage() {
           <p>
             <span className="text-[var(--color-primary)]">NEXT_PUBLIC_API_URL</span>
             <span className="mx-2">=</span>
-            {process.env.NEXT_PUBLIC_API_URL || "https://final-project-qly6.onrender.com/api"}
+            {"http://127.0.0.1:8000/api"}
           </p>
           <p>
             <span className="text-[var(--color-primary)]">NEXT_PUBLIC_WS_URL</span>
             <span className="mx-2">=</span>
-            {process.env.NEXT_PUBLIC_WS_URL || "wss://final-project-qly6.onrender.com/ws"}
+            {"ws://127.0.0.1:8000/ws"}
           </p>
         </div>
       </div>

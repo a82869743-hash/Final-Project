@@ -6,10 +6,8 @@
 
 const RENDER_BACKEND = "https://final-project-qly6.onrender.com";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || `${RENDER_BACKEND}/api`;
-const WS_BASE =
-  process.env.NEXT_PUBLIC_WS_URL || `wss://final-project-qly6.onrender.com/ws`;
+const API_BASE = "http://127.0.0.1:8000/api";
+const WS_BASE = "ws://127.0.0.1:8000/ws";
 
 // ── Types matching backend schemas ──
 
@@ -162,23 +160,24 @@ export interface VoiceIntentResponse {
 
 // ── Fetch helpers with timeout ──
 
-const FETCH_TIMEOUT = 15000; // 15s timeout — Render backend should respond within this
+const FETCH_TIMEOUT = 10000; // 10 seconds timeout for snappy UI
 
 async function fetchWithTimeout(
   url: string,
-  options: RequestInit = {},
+  options: RequestInit & { timeout?: number } = {},
 ): Promise<Response> {
+  const { timeout = FETCH_TIMEOUT, ...fetchOptions } = options;
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+  const id = setTimeout(() => controller.abort(), timeout);
   try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
+    const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
     return res;
   } finally {
     clearTimeout(id);
   }
 }
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, options: RequestInit & { timeout?: number } = {}): Promise<T> {
   const res = await fetchWithTimeout(`${API_BASE}${path}`, {
     cache: "no-store",
   });
@@ -336,6 +335,8 @@ export function connectVehicleWS(
     });
 }
 
+let _wsPingTimer: ReturnType<typeof setInterval> | null = null;
+
 function _createWS(
   onMessage: (vehicles: Vehicle[]) => void,
   onError?: (err: Event) => void,
@@ -345,10 +346,18 @@ function _createWS(
 
   ws.onopen = () => {
     _wsReconnectDelay = 3000; // reset backoff on success
+    // Send ping every 30 seconds to keep Render connection alive
+    if (_wsPingTimer) clearInterval(_wsPingTimer);
+    _wsPingTimer = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send("ping");
+      }
+    }, 30000);
   };
 
   ws.onmessage = (event) => {
     try {
+      if (event.data === '{"type":"pong"}') return;
       const vehicles: Vehicle[] = JSON.parse(event.data);
       onMessage(vehicles);
     } catch {
@@ -363,6 +372,10 @@ function _createWS(
 
   ws.onclose = () => {
     _wsInstance = null;
+    if (_wsPingTimer) {
+      clearInterval(_wsPingTimer);
+      _wsPingTimer = null;
+    }
     if (!_wsDisconnected) {
       _wsReconnectTimer = setTimeout(() => {
         _wsReconnectTimer = null;
@@ -485,13 +498,13 @@ export const videoApi = {
 
 // ── Video Alert WebSocket ──
 
-const WS_VIDEO_BASE =
-  process.env.NEXT_PUBLIC_WS_URL?.replace("/ws", "/ws/video") ||
-  "wss://final-project-qly6.onrender.com/ws/video";
+const WS_VIDEO_BASE = "ws://127.0.0.1:8000/ws/video";
 
 let _videoWsInstance: WebSocket | null = null;
 let _videoWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _videoWsDisconnected = false;
+let _videoWsReconnectDelay = 3000;
+let _videoWsPingTimer: ReturnType<typeof setInterval> | null = null;
 
 export function connectVideoAlertWS(
   onAlert: (alert: VideoAlert) => void,
@@ -506,11 +519,25 @@ export function connectVideoAlertWS(
     clearTimeout(_videoWsReconnectTimer);
     _videoWsReconnectTimer = null;
   }
+  if (_videoWsPingTimer) {
+    clearInterval(_videoWsPingTimer);
+    _videoWsPingTimer = null;
+  }
   _videoWsDisconnected = false;
 
   try {
     const ws = new WebSocket(WS_VIDEO_BASE);
     _videoWsInstance = ws;
+
+    ws.onopen = () => {
+      _videoWsReconnectDelay = 3000;
+      // Send ping every 30 seconds to keep Render connection alive
+      _videoWsPingTimer = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send("ping");
+        }
+      }, 30000);
+    };
 
     ws.onmessage = (event) => {
       try {
@@ -525,11 +552,16 @@ export function connectVideoAlertWS(
 
     ws.onclose = () => {
       _videoWsInstance = null;
+      if (_videoWsPingTimer) {
+        clearInterval(_videoWsPingTimer);
+        _videoWsPingTimer = null;
+      }
       if (!_videoWsDisconnected) {
         _videoWsReconnectTimer = setTimeout(() => {
           _videoWsReconnectTimer = null;
           connectVideoAlertWS(onAlert, onError);
-        }, 5000);
+        }, _videoWsReconnectDelay);
+        _videoWsReconnectDelay = Math.min(_videoWsReconnectDelay * 1.5, 30000);
       }
     };
   } catch {

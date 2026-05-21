@@ -16,17 +16,27 @@ router = APIRouter()
 
 # Try to load a real model; fall back to mock prediction
 _model = None
-try:
-    import xgboost  # noqa: F401 — needed to deserialize XGBClassifier pickles
-    import joblib
-    model_path = os.path.join(os.path.dirname(__file__), "..", "model.pkl")
-    if os.path.exists(model_path):
-        _model = joblib.load(model_path)
-        print(f"[OK] XGBoost model loaded from {model_path}")
-except ImportError:
-    print("[WARNING] xgboost not installed, using mock predictions")
-except Exception as e:
-    print(f"[WARNING] No XGBoost model found, using mock predictions: {e}")
+_model_loaded = False
+
+def get_model():
+    global _model, _model_loaded
+    if _model_loaded:
+        return _model
+    
+    _model_loaded = True
+    try:
+        import xgboost  # noqa: F401 — needed to deserialize XGBClassifier pickles
+        import joblib
+        model_path = os.path.join(os.path.dirname(__file__), "..", "model.pkl")
+        if os.path.exists(model_path):
+            _model = joblib.load(model_path)
+            print(f"[OK] XGBoost model loaded from {model_path}")
+    except ImportError:
+        print("[WARNING] xgboost not installed, using mock predictions")
+    except Exception as e:
+        print(f"[WARNING] No XGBoost model found, using mock predictions: {e}")
+    
+    return _model
 
 
 def _mock_predict(data: PredictionRequest) -> float:
@@ -40,7 +50,8 @@ def _mock_predict(data: PredictionRequest) -> float:
 
 @router.post("/predict", response_model=PredictionResponse)
 async def predict(request: PredictionRequest):
-    if _model is not None:
+    model = get_model()
+    if model is not None:
         features = np.array([[
             request.hour, request.day_of_week, request.zone_id,
             request.temperature, request.humidity, request.traffic_index,
@@ -48,8 +59,8 @@ async def predict(request: PredictionRequest):
         ]])
         
         # Check if the model has predict_proba (meaning it's a Classifier)
-        if hasattr(_model, "predict_proba"):
-            proba = _model.predict_proba(features)[0]
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(features)[0]
             
             # Predict Proba MultiClass Bridging
             # For 4 classes, array len will be 4.
@@ -66,7 +77,7 @@ async def predict(request: PredictionRequest):
                 
             risk_score = float(np.clip(risk_score, 0.0, 1.0))
         else:
-            risk_score = float(_model.predict(features)[0])
+            risk_score = float(model.predict(features)[0])
             confidence_score = 0.85
     else:
         risk_score = _mock_predict(request)

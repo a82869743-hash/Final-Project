@@ -9,6 +9,15 @@ import os
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
+os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"
+os.environ["MPLCONFIGDIR"] = "/tmp/matplotlib"
+
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+except ImportError:
+    pass
+
 # Verify environment variables
 print()
 print("--- ENVIRONMENT CHECK ---")

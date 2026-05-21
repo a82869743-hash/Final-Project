@@ -60,7 +60,7 @@ from routes.emergency import router as emergency_router
 from routes.text_intent import router as text_intent_router
 
 # ── NEW: Video Intelligence Module (feature-flagged) ──
-_enable_video_ai = os.getenv("ENABLE_VIDEO_AI", "true").lower() in ("true", "1", "yes")
+_enable_video_ai = os.getenv("ENABLE_VIDEO_AI", "false").lower() in ("true", "1", "yes")
 if _enable_video_ai:
     try:
         from routes.video import router as video_router

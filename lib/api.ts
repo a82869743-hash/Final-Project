@@ -1,13 +1,14 @@
 /**
  * Aegis Tactical — API client
  * Centralizes all backend communication.
- * Uses 127.0.0.1 to avoid DNS resolution issues.
  */
 
+const IS_PROD = process.env.NODE_ENV === "production";
 const RENDER_BACKEND = "https://final-project-qly6.onrender.com";
+const RENDER_WS = "wss://final-project-qly6.onrender.com";
 
-const API_BASE = "http://127.0.0.1:8000/api";
-const WS_BASE = "ws://127.0.0.1:8000/ws";
+const API_BASE = IS_PROD ? `${RENDER_BACKEND}/api` : "http://127.0.0.1:8000/api";
+const WS_BASE = IS_PROD ? `${RENDER_WS}/ws` : "ws://127.0.0.1:8000/ws";
 
 // ── Types matching backend schemas ──
 
@@ -532,7 +533,7 @@ export const videoApi = {
 
 // ── Video Alert WebSocket ──
 
-const WS_VIDEO_BASE = "ws://127.0.0.1:8000/ws/video";
+const WS_VIDEO_BASE = IS_PROD ? `${RENDER_WS}/ws/video` : "ws://127.0.0.1:8000/ws/video";
 
 let _videoWsInstance: WebSocket | null = null;
 let _videoWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;

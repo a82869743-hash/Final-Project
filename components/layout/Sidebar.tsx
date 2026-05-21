@@ -59,8 +59,11 @@ export default function Sidebar() {
         try {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 35000);
+          const fallbackApi = process.env.NODE_ENV === "production" 
+            ? "https://final-project-qly6.onrender.com/api" 
+            : "http://127.0.0.1:8000/api";
           const res = await fetch(
-            (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api") + "/health",
+            (process.env.NEXT_PUBLIC_API_URL || fallbackApi) + "/health",
             { cache: "no-store", signal: controller.signal }
           );
           clearTimeout(timeoutId);

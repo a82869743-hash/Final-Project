@@ -1,9 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  turbopack: {
-    root: import.meta.dirname,
-  },
+  // Production-safe config — turbopack root not needed for Vercel builds
 };
 
 export default nextConfig;

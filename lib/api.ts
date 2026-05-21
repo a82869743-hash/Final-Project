@@ -160,7 +160,7 @@ export interface VoiceIntentResponse {
 
 // ── Fetch helpers with timeout ──
 
-const FETCH_TIMEOUT = 30000; // 30s timeout — Render free tier cold starts can take ~30s
+const FETCH_TIMEOUT = 15000; // 15s timeout — Render backend should respond within this
 
 async function fetchWithTimeout(
   url: string,

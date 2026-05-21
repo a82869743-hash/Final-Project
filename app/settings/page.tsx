@@ -87,72 +87,73 @@ export default function SettingsPage() {
 
   const checkServices = useCallback(async () => {
     setChecking(true);
-    const updated = [...services];
 
-    // 1. Check FastAPI backend via ping
-    const pingResult = await api.ping();
-    updated[0] = {
-      ...updated[0],
-      status: pingResult.ok ? "online" : "offline",
-      latency: pingResult.ok ? `${pingResult.latency}ms` : "—",
-    };
+    // Run ALL checks in parallel for speed (don't wait for ping before health)
+    const [pingResult, healthResult, wsResult] = await Promise.allSettled([
+      // 1. Ping backend root
+      api.ping(),
+      // 2. Health endpoint (subsystem status)
+      api.health().catch(() => null),
+      // 3. WebSocket connectivity
+      new Promise<boolean>((resolve) => {
+        try {
+          const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://127.0.0.1:8000/ws";
+          const ws = new WebSocket(wsUrl);
+          const timer = setTimeout(() => { try { ws.close(); } catch {} resolve(false); }, 8000);
+          ws.onopen = () => { clearTimeout(timer); ws.close(); resolve(true); };
+          ws.onerror = () => { clearTimeout(timer); resolve(false); };
+        } catch { resolve(false); }
+      }),
+    ]);
 
-    // 2-4. Check subsystems via /api/health
-    if (pingResult.ok) {
-      try {
-        const health: HealthStatus = await api.health();
+    const ping = pingResult.status === "fulfilled" ? pingResult.value : { ok: false, latency: 0 };
+    const health = healthResult.status === "fulfilled" ? healthResult.value : null;
+    const wsOk = wsResult.status === "fulfilled" ? wsResult.value : false;
 
-        // Supabase
-        updated[1] = {
-          ...updated[1],
-          status: health.supabase.status,
-          latency: health.supabase.latency,
-          description: health.supabase.status === "degraded" ? "Configure SUPABASE_URL & SUPABASE_KEY" : "Database & Auth",
-        };
+    setServices([
+      // FastAPI Backend
+      {
+        name: "FastAPI Backend", icon: Server, description: "Core REST API server",
+        status: ping.ok ? "online" : "offline",
+        latency: ping.ok ? `${ping.latency}ms` : "—",
+      },
+      // Supabase
+      {
+        name: "Supabase", icon: Database,
+        description: health?.supabase?.status === "degraded" ? "Configure SUPABASE_URL & SUPABASE_KEY" : "Database & Auth",
+        status: health?.supabase?.status || "offline",
+        latency: health?.supabase?.latency || "—",
+      },
+      // WebSocket
+      {
+        name: "WebSocket", icon: Wifi, description: "Real-time vehicle feed",
+        status: wsOk ? "online" : "offline",
+        latency: wsOk ? "Connected" : "—",
+      },
+      // XGBoost Model
+      {
+        name: "XGBoost Model", icon: Brain, description: "Risk prediction engine",
+        status: health?.ml_model?.status || "offline",
+        latency: health?.ml_model?.latency || "—",
+      },
+      // Whisper API
+      {
+        name: "Whisper API", icon: Mic,
+        description: health?.whisper?.status === "degraded" ? "Running in mock mode" : "Audio transcription",
+        status: health?.whisper?.status || "offline",
+        latency: health?.whisper?.latency || "—",
+      },
+    ]);
 
-        // XGBoost
-        updated[3] = {
-          ...updated[3],
-          status: health.ml_model.status,
-          latency: health.ml_model.latency,
-        };
-
-        // Whisper
-        updated[4] = {
-          ...updated[4],
-          status: health.whisper.status,
-          latency: health.whisper.latency,
-          description: health.whisper.status === "degraded" ? "Running in mock mode" : "Audio transcription",
-        };
-
-      } catch {
-        // Health endpoint failed, but ping worked
-        updated[3] = { ...updated[3], status: "degraded", latency: "Check error" };
-      }
-    }
-
-    // 5. Check WebSocket
-    try {
-      const ws = new WebSocket(process.env.NEXT_PUBLIC_WS_URL || "ws://127.0.0.1:8000/ws");
-      await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => { resolve(); ws.close(); };
-        ws.onerror = () => reject();
-        setTimeout(reject, 10000);
-      });
-      updated[2] = { ...updated[2], status: "online", latency: "Connected" };
-    } catch {
-      updated[2] = { ...updated[2], status: "offline", latency: "—" };
-    }
-
-    setServices(updated);
     setChecking(false);
 
-    const onlineCount = updated.filter((s) => s.status === "online").length;
+    const onlineCount = [ping.ok, health?.supabase?.status === "online", wsOk, health?.ml_model?.status === "online", health?.whisper?.status === "online"]
+      .filter(Boolean).length;
     showToast(
-      `Health check complete — ${onlineCount}/${updated.length} services online`,
-      onlineCount === updated.length ? "success" : onlineCount > 0 ? "warning" : "error"
+      `Health check complete — ${onlineCount}/5 services online`,
+      onlineCount === 5 ? "success" : onlineCount > 0 ? "warning" : "error"
     );
-  }, [services, showToast]);
+  }, [showToast]);
 
   useEffect(() => {
     checkServices();

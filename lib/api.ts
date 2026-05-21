@@ -4,10 +4,12 @@
  * Uses 127.0.0.1 to avoid DNS resolution issues.
  */
 
+const RENDER_BACKEND = "https://final-project-qly6.onrender.com";
+
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
+  process.env.NEXT_PUBLIC_API_URL || `${RENDER_BACKEND}/api`;
 const WS_BASE =
-  process.env.NEXT_PUBLIC_WS_URL || "ws://127.0.0.1:8000/ws";
+  process.env.NEXT_PUBLIC_WS_URL || `wss://final-project-qly6.onrender.com/ws`;
 
 // ── Types matching backend schemas ──
 
@@ -281,7 +283,7 @@ export const api = {
     const start = Date.now();
     try {
       const res = await fetchWithTimeout(
-        (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api").replace("/api", "/"),
+        API_BASE.replace("/api", "/"),
         { cache: "no-store" }
       );
       return { ok: res.ok, latency: Date.now() - start };
@@ -485,7 +487,7 @@ export const videoApi = {
 
 const WS_VIDEO_BASE =
   process.env.NEXT_PUBLIC_WS_URL?.replace("/ws", "/ws/video") ||
-  "ws://127.0.0.1:8000/ws/video";
+  "wss://final-project-qly6.onrender.com/ws/video";
 
 let _videoWsInstance: WebSocket | null = null;
 let _videoWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;

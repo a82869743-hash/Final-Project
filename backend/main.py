@@ -39,8 +39,11 @@ else:
 print("-------------------------\n")
 
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+import time
+import traceback
 
 from routes.dashboard import router as dashboard_router
 from routes.alerts import router as alerts_router
@@ -88,6 +91,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    try:
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        print(f"{request.method} {request.url.path} {response.status_code} {process_time:.2f}s")
+        return response
+    except Exception as e:
+        process_time = time.time() - start_time
+        print(f"{request.method} {request.url.path} 500 {process_time:.2f}s")
+        print(traceback.format_exc())
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
 # ── Register routers ──
 app.include_router(dashboard_router, prefix="/api", tags=["Dashboard"])

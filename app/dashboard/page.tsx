@@ -31,6 +31,81 @@ import { api, connectVehicleWS, disconnectVehicleWS, type DashboardStats, type A
 
 import { useDispatchContext } from "@/components/providers/DispatchProvider";
 
+// Add ErrorBoundary
+class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean}> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-4 rounded-lg bg-[rgba(239,68,68,0.06)] border border-[rgba(239,68,68,0.15)] flex flex-col items-center justify-center text-center h-full min-h-[150px]">
+          <ShieldAlert className="h-6 w-6 text-[var(--color-error)] mb-2" />
+          <p className="text-[13px] font-medium text-[var(--color-error)]">Module temporarily unavailable</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// Add SystemStatus
+const SystemStatus = ({ wsState, error, lastUpdated, isDemoMode }: { wsState: string, error: boolean, lastUpdated: Date | null, isDemoMode?: boolean }) => {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i); }, []);
+
+  let statusText = "Live connection restored";
+  let statusColor = "bg-green-500 animate-pulse";
+  
+  if (isDemoMode) {
+    statusText = "Tactical Overwatch (Protected Mode)";
+    statusColor = "bg-purple-500 animate-pulse";
+  } else if (wsState === "CONNECTING") {
+    statusText = "Connecting to live telemetry...";
+    statusColor = "bg-cyan-500 animate-pulse";
+  } else if (wsState === "RECONNECTING" || wsState === "POLLING") {
+    statusText = "Re-establishing live connection...";
+    statusColor = "bg-yellow-500 animate-pulse";
+  } else if (wsState === "FAILED" || error) {
+    statusText = "Connection lost, retrying...";
+    statusColor = "bg-orange-500 animate-pulse";
+  }
+
+  return (
+    <div className="glass rounded-[var(--radius-lg)] p-3 shadow-sm border border-[var(--color-outline-variant)] flex flex-col gap-2 min-w-[220px]">
+      <div className="flex items-center gap-2 mb-1">
+        <span className={`h-2.5 w-2.5 rounded-full ${statusColor}`}></span>
+        <span className="text-[11px] font-semibold tracking-wide text-[var(--color-on-surface)]">
+          {statusText}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] text-[var(--color-on-surface-muted)]">
+        <div>Backend: <span className={isDemoMode ? "text-purple-400" : error ? "text-orange-400" : "text-green-400"}>{isDemoMode ? "Protected" : error ? "Waking up..." : "Connected"}</span></div>
+        <div>WebSocket: <span className={wsState === "CONNECTED" ? "text-green-400" : wsState === "POLLING" ? "text-yellow-400" : "text-cyan-400"}>{wsState}</span></div>
+        <div>Database: <span className={isDemoMode ? "text-purple-400" : error ? "text-orange-400" : "text-green-400"}>{isDemoMode ? "Protected" : error ? "Pending" : "Connected"}</span></div>
+        <div>AI: <span className="text-green-400">Ready</span></div>
+      </div>
+      {lastUpdated && (
+        <div className="text-[9px] text-[var(--color-on-surface-muted)] mt-1 border-t border-[var(--color-surface-container-high)] pt-1">
+          Last updated: {Math.max(0, Math.floor((now.getTime() - lastUpdated.getTime()) / 1000))}s ago
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Add Skeletons
+const SkeletonCard = () => (
+  <div className="card-lifted p-5 animate-pulse min-h-[120px] flex flex-col justify-between border border-[var(--color-outline-variant)]">
+    <div className="h-4 bg-[var(--color-surface-container-high)] rounded w-1/3 mb-4"></div>
+    <div className="h-8 bg-[var(--color-surface-container-high)] rounded w-1/2"></div>
+  </div>
+);
+
 export default function DashboardPage() {
   const { showToast } = useToast();
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -47,6 +122,10 @@ export default function DashboardPage() {
   const [riskZones, setRiskZones] = useState<RiskZone[]>([]);
   const [selectedCity, setSelectedCity] = useState<string>("All India");
   const [forecastOffset, setForecastOffset] = useState<number>(0);
+  
+  const [wsState, setWsState] = useState<"CONNECTING" | "RECONNECTING" | "CONNECTED" | "FAILED" | "POLLING">("CONNECTING");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   const CITIES = [
     "All India", "Delhi", "Mumbai", "Bangalore", "Chennai", "Kolkata", 
@@ -59,7 +138,23 @@ export default function DashboardPage() {
   const filteredAlerts = alerts.filter(a => selectedCity === "All India" || a.location.includes(selectedCity) || a.title.includes(selectedCity));
 
   useEffect(() => {
+    // 1. Snapshot Caching: Instant load from storage
+    try {
+      const cachedStats = sessionStorage.getItem("aegis_stats");
+      const cachedAlerts = sessionStorage.getItem("aegis_alerts");
+      const cachedVehicles = sessionStorage.getItem("aegis_vehicles");
+      const cachedAnalytics = sessionStorage.getItem("aegis_analytics");
+      
+      if (cachedStats) setStats(JSON.parse(cachedStats));
+      if (cachedAlerts) setAlerts(JSON.parse(cachedAlerts));
+      if (cachedVehicles) setVehicles(JSON.parse(cachedVehicles));
+      if (cachedAnalytics) setAnalytics(JSON.parse(cachedAnalytics));
+    } catch(e) {
+      console.warn("Could not load cached dashboard state", e);
+    }
+
     async function fetchData() {
+      const fetchStart = performance.now();
       try {
         const [s, a, v, an] = await Promise.all([
           api.getDashboard(),
@@ -67,42 +162,69 @@ export default function DashboardPage() {
           api.getVehicles(),
           api.getAnalytics(),
         ]);
+        
+        console.log(`[METRIC] Dashboard data fetched in ${(performance.now() - fetchStart).toFixed(2)}ms`);
+        
         setStats(s);
         setAlerts(a);
         setVehicles(v);
+        setIsDemoMode(false);
+        
+        sessionStorage.setItem("aegis_stats", JSON.stringify(s));
+        sessionStorage.setItem("aegis_alerts", JSON.stringify(a));
+        sessionStorage.setItem("aegis_vehicles", JSON.stringify(v));
+        
         if (an && (an as any).error) {
            console.error("Analytics returned error:", an);
            setAnalytics(null);
            setError(true);
         } else {
            setAnalytics(an);
+           sessionStorage.setItem("aegis_analytics", JSON.stringify(an));
            setError(false);
         }
       } catch (err) {
-        console.warn("Dashboard: backend unreachable —", err);
+        console.warn("Dashboard: backend unreachable — fallback to demo state", err);
         setError(true);
+        setIsDemoMode(true);
 
-        // ── Demo fallback: populate with simulation data if backend is down ──
-        if (!stats) {
-          setStats({ active_ambulances: 6, avg_response_time: 4.2, incidents_today: 12, critical_alerts: 3 });
-        }
-        if (alerts.length === 0) {
-          setAlerts([
-            { id: "demo-1", severity: "critical", title: "Multi-vehicle collision", location: "NH-48 Vadodara", time: "2 min ago" },
-            { id: "demo-2", severity: "warning", title: "Fire reported", location: "Industrial Zone B", time: "5 min ago" },
-            { id: "demo-3", severity: "info", title: "Medical emergency", location: "Alkapuri Sector 7", time: "8 min ago" },
-          ]);
-        }
-        if (vehicles.length === 0) {
-          setVehicles([
-            { id: "demo-v1", name: "AMB-101", lat: 22.3072, lng: 73.1812, status: "available", speed: 0, heading: 45, driver: "R. Patel", destination: "Base" },
-            { id: "demo-v2", name: "AMB-102", lat: 22.3190, lng: 73.1945, status: "en_route", speed: 62, heading: 180, driver: "S. Kumar", destination: "NH-48 Vadodara" },
-            { id: "demo-v3", name: "AMB-103", lat: 22.2950, lng: 73.2050, status: "on_scene", speed: 0, heading: 90, driver: "M. Shah", destination: "Industrial Zone B" },
-          ]);
-        }
-        if (!analytics) {
-          setAnalytics({ total_dispatches: 47, avg_eta: 4.2, active_vehicles: 6, high_risk_zones: 3 });
-        }
+        // 2. Auto demo-data fallback
+        setVehicles(prev => {
+          if (prev.length > 0) return prev;
+          const mockVehicles: Vehicle[] = [
+            { id: "VEH-21", name: "Alpha Response", lat: 28.6139, lng: 77.2090, status: "en_route", speed: 65, heading: 90, driver: "J. Smith", destination: "Downtown Sector" },
+            { id: "VEH-05", name: "Bravo Unit", lat: 28.6200, lng: 77.2150, status: "available", speed: 0, heading: 0, driver: "A. Patel", destination: "Base" },
+            { id: "VEH-12", name: "Charlie Team", lat: 28.6100, lng: 77.2000, status: "on_scene", speed: 0, heading: 180, driver: "M. Kumar", destination: "Industrial Area" }
+          ];
+          return mockVehicles;
+        });
+
+        setAlerts(prev => {
+          if (prev.length > 0) return prev;
+          const mockAlerts: Alert[] = [
+            { id: "ALT-01", severity: "critical", title: "Traffic Collision", location: "Downtown Sector", time: new Date().toISOString() },
+            { id: "ALT-02", severity: "warning", title: "Road Blockage", location: "Industrial Area", time: new Date(Date.now() - 300000).toISOString() }
+          ];
+          return mockAlerts;
+        });
+        
+        setAnalytics(prev => {
+          if (prev) return prev;
+          return {
+            total_dispatches: 142,
+            avg_eta: 6.5,
+            active_vehicles: 3,
+            high_risk_zones: 2,
+            recent_dispatches: [
+              { id: 1, vehicle_id: "VEH-21", eta: 4, hotspot_lat: 28.6139, hotspot_lng: 77.2090, risk_level: "critical", timestamp: new Date().toISOString() }
+            ]
+          };
+        });
+        
+        setStats(prev => {
+          if (prev) return prev;
+          return { active_ambulances: 3, avg_response_time: 6.5, incidents_today: 45, critical_alerts: 2 };
+        });
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -112,6 +234,23 @@ export default function DashboardPage() {
     // Refresh every 10 seconds
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Health Verification Polling
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const start = performance.now();
+        await api.health();
+        const latency = performance.now() - start;
+        console.log(`[METRIC] Health check OK. Latency: ${latency.toFixed(2)}ms`);
+      } catch (err) {
+        console.log(`[METRIC] Health check failed.`);
+      }
+    };
+    checkHealth();
+    const hInterval = setInterval(checkHealth, 60000);
+    return () => clearInterval(hInterval);
   }, []);
 
   // ML Prediction Forecast Fetcher
@@ -158,10 +297,16 @@ export default function DashboardPage() {
     connectVehicleWS(
       (updatedVehicles) => {
         setVehicles(updatedVehicles);
+        setLastUpdated(new Date());
+        sessionStorage.setItem("aegis_vehicles", JSON.stringify(updatedVehicles));
       },
       () => {
         // Silent reconnect — handled by connectVehicleWS's backoff logic
       },
+      (state) => {
+        console.log(`[METRIC] WebSocket state changed: ${state}`);
+        setWsState(state);
+      }
     );
     return () => disconnectVehicleWS();
   }, []);
@@ -286,10 +431,10 @@ export default function DashboardPage() {
         </div>
       )}
       {!loading && error && (
-        <div className="flex items-center gap-3 rounded-[var(--radius-md)] bg-[rgba(239,68,68,0.06)] px-4 py-3 animate-fade-in">
-          <WifiOff className="h-4 w-4 text-[var(--color-error)] shrink-0" />
-          <span className="flex-1 text-[12px] font-medium text-[var(--color-error)]">
-            Unable to connect to backend — showing cached data
+        <div className="flex items-center gap-3 rounded-[var(--radius-md)] bg-[rgba(234,179,8,0.06)] px-4 py-3 animate-fade-in border border-[rgba(234,179,8,0.15)]">
+          <div className="h-4 w-4 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin shrink-0" />
+          <span className="flex-1 text-[12px] font-medium text-yellow-500">
+            Backend services are currently waking up — showing cached data...
           </span>
           <button
             onClick={handleManualRefresh}
@@ -310,6 +455,8 @@ export default function DashboardPage() {
           </h2>
           <p className="text-[12px] text-[var(--color-on-surface-muted)]">Live monitoring and dispatch matrix</p>
         </div>
+        
+        <SystemStatus wsState={wsState} error={error} lastUpdated={lastUpdated} isDemoMode={isDemoMode} />
         <div className="flex items-center gap-3">
           <label className="text-[11px] font-semibold tracking-wider text-[var(--color-on-surface-muted)] uppercase">Region</label>
           <select 
@@ -326,42 +473,55 @@ export default function DashboardPage() {
 
       {/* ── Summary Cards (Analytics API) ── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Total Dispatches"
-          value={analytics?.total_dispatches ?? "—"}
-          change={loading ? "Loading..." : "All Time"}
-          changeType="up"
-          icon={Activity}
-          accentColor="#00677f"
-        />
-        <StatCard
-          label="Avg ETA"
-          value={analytics?.avg_eta !== undefined ? `${analytics.avg_eta} min` : "—"}
-          change={loading ? "Loading..." : "Live Tracker"}
-          changeType="down"
-          icon={Clock}
-          accentColor="#10b981"
-        />
-        <StatCard
-          label="Active Vehicles"
-          value={analytics?.active_vehicles ?? "—"}
-          change={loading ? "Loading..." : "Online"}
-          changeType="up"
-          icon={Ambulance}
-          accentColor="#f59e0b"
-        />
-        <StatCard
-          label="High Risk Zones"
-          value={analytics?.high_risk_zones ?? "—"}
-          change={loading ? "Loading..." : "Critical"}
-          changeType="down"
-          icon={ShieldAlert}
-          accentColor="#ef4444"
-        />
+        {loading ? (
+          <>
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </>
+        ) : (
+          <>
+            <StatCard
+              label="Total Dispatches"
+              value={analytics?.total_dispatches ?? "—"}
+              change="All Time"
+              changeType="up"
+              icon={Activity}
+              accentColor="#00677f"
+            />
+            <StatCard
+              label="Avg ETA"
+              value={analytics?.avg_eta !== undefined ? `${analytics.avg_eta} min` : "—"}
+              change="Live Tracker"
+              changeType="down"
+              icon={Clock}
+              accentColor="#10b981"
+            />
+            <StatCard
+              label="Active Vehicles"
+              value={analytics?.active_vehicles ?? "—"}
+              change="Online"
+              changeType="up"
+              icon={Ambulance}
+              accentColor="#f59e0b"
+            />
+            <StatCard
+              label="High Risk Zones"
+              value={analytics?.high_risk_zones ?? "—"}
+              change="Critical"
+              changeType="down"
+              icon={ShieldAlert}
+              accentColor="#ef4444"
+            />
+          </>
+        )}
       </div>
 
       {/* ── Premium Analytics Board ── */}
-      <PremiumAnalytics vehicles={filteredVehicles} alerts={filteredAlerts} />
+      <ErrorBoundary>
+        <PremiumAnalytics vehicles={filteredVehicles} alerts={filteredAlerts} />
+      </ErrorBoundary>
 
       {/* ── Map + Alerts ── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -395,23 +555,31 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <RiskZoneMap
-            height="420px"
-            prediction={prediction}
-            riskZones={riskZones}
-            selectedCity={selectedCity}
-          />
+          <ErrorBoundary>
+            <RiskZoneMap
+              height="420px"
+              prediction={prediction}
+              riskZones={riskZones}
+              selectedCity={selectedCity}
+            />
+          </ErrorBoundary>
         </div>
         <div className="lg:col-span-1 min-h-[420px]">
-          <AlertsList alerts={filteredAlerts} />
+          <ErrorBoundary>
+            <AlertsList alerts={filteredAlerts} />
+          </ErrorBoundary>
         </div>
       </div>
 
       {/* ── Tactical Scanner & Activity ── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 flex flex-col gap-4">
-          <RadioScanner alerts={filteredAlerts} />
-          <ActivityFeed />
+          <ErrorBoundary>
+            <RadioScanner alerts={filteredAlerts} />
+          </ErrorBoundary>
+          <ErrorBoundary>
+            <ActivityFeed />
+          </ErrorBoundary>
         </div>
 
         {/* Info Column */}

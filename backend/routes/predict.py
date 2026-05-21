@@ -8,9 +8,13 @@ import random
 import subprocess
 from datetime import datetime
 from fastapi import APIRouter, BackgroundTasks
+from fastapi.responses import JSONResponse
 from models.schemas import PredictionRequest, PredictionResponse
 from services.data_store import get_vehicles
 from db import insert_prediction, count_recent_incidents, supabase
+import time
+
+START_TIME = time.time()
 
 router = APIRouter()
 
@@ -48,8 +52,10 @@ def _mock_predict(data: PredictionRequest) -> float:
     return min(max(base, 0.0), 1.0)
 
 
-@router.post("/predict", response_model=PredictionResponse)
+@router.post("/predict")
 async def predict(request: PredictionRequest):
+    if time.time() - START_TIME < 5:
+        return JSONResponse(content={"status": "warming_up", "message": "AI engine initializing"})
     model = get_model()
     if model is not None:
         features = np.array([[

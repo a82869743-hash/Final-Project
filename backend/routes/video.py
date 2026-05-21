@@ -12,9 +12,13 @@ import logging
 import tempfile
 import shutil
 from typing import Optional
+import time
 
 from fastapi import APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+START_TIME = time.time()
 
 logger = logging.getLogger("aegis.routes.video")
 
@@ -252,6 +256,8 @@ async def analyze_video_endpoint(
 @router.get("/video/events", summary="List recent video events")
 async def list_video_events(limit: int = 50):
     """Retrieve recent video analysis events from Supabase."""
+    if time.time() - START_TIME < 5:
+        return JSONResponse(content={"status": "warming_up", "message": "AI engine initializing"})
     if not ENABLE_VIDEO_AI:
         return {"events": [], "message": "Video AI disabled"}
 

@@ -297,11 +297,14 @@ export const api = {
 let _wsInstance: WebSocket | null = null;
 let _wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _wsReconnectDelay = 3000; // starts at 3s, backs off to 30s max
+let _wsReconnectAttempts = 0;
 let _wsDisconnected = false; // tracks intentional disconnect
+let _wsFallbackTimer: ReturnType<typeof setInterval> | null = null;
 
 export function connectVehicleWS(
   onMessage: (vehicles: Vehicle[]) => void,
   onError?: (err: Event) => void,
+  onStateChange?: (state: "CONNECTING" | "RECONNECTING" | "CONNECTED" | "FAILED" | "POLLING") => void
 ): void {
   // Clean up any existing connection
   if (_wsInstance) {
@@ -316,18 +319,36 @@ export function connectVehicleWS(
 
   _wsDisconnected = false;
 
+  if (_wsReconnectAttempts === 0) {
+    onStateChange?.("CONNECTING");
+  } else if (_wsReconnectAttempts >= 3) {
+    onStateChange?.("POLLING");
+    if (!_wsFallbackTimer) {
+      _wsFallbackTimer = setInterval(async () => {
+        try {
+          const vehicles = await api.getVehicles();
+          onMessage(vehicles);
+        } catch {}
+      }, 10000);
+    }
+  } else {
+    onStateChange?.("RECONNECTING");
+  }
+
   // Pre-check: only attempt WS if the backend is reachable
   fetch(API_BASE.replace("/api", "/"), { mode: "no-cors" })
     .then(() => {
       if (_wsDisconnected) return; // user navigated away
-      _createWS(onMessage, onError);
+      _createWS(onMessage, onError, onStateChange);
     })
     .catch(() => {
       // Backend unreachable — retry silently after delay
       if (!_wsDisconnected) {
+        _wsReconnectAttempts++;
+        if (_wsReconnectAttempts === 3) onStateChange?.("FAILED");
         _wsReconnectTimer = setTimeout(() => {
           _wsReconnectTimer = null;
-          connectVehicleWS(onMessage, onError);
+          connectVehicleWS(onMessage, onError, onStateChange);
         }, _wsReconnectDelay);
         _wsReconnectDelay = Math.min(_wsReconnectDelay * 1.5, 30000);
       }
@@ -340,12 +361,19 @@ let _wsPingTimer: ReturnType<typeof setInterval> | null = null;
 function _createWS(
   onMessage: (vehicles: Vehicle[]) => void,
   onError?: (err: Event) => void,
+  onStateChange?: (state: "CONNECTING" | "RECONNECTING" | "CONNECTED" | "FAILED" | "POLLING") => void
 ) {
   const ws = new WebSocket(WS_BASE);
   _wsInstance = ws;
 
   ws.onopen = () => {
     _wsReconnectDelay = 3000; // reset backoff on success
+    _wsReconnectAttempts = 0;
+    onStateChange?.("CONNECTED");
+    if (_wsFallbackTimer) {
+      clearInterval(_wsFallbackTimer);
+      _wsFallbackTimer = null;
+    }
     // Send ping every 30 seconds to keep Render connection alive
     if (_wsPingTimer) clearInterval(_wsPingTimer);
     _wsPingTimer = setInterval(() => {
@@ -377,9 +405,11 @@ function _createWS(
       _wsPingTimer = null;
     }
     if (!_wsDisconnected) {
+      _wsReconnectAttempts++;
+      if (_wsReconnectAttempts === 3) onStateChange?.("FAILED");
       _wsReconnectTimer = setTimeout(() => {
         _wsReconnectTimer = null;
-        connectVehicleWS(onMessage, onError);
+        connectVehicleWS(onMessage, onError, onStateChange);
       }, _wsReconnectDelay);
       _wsReconnectDelay = Math.min(_wsReconnectDelay * 1.5, 30000);
     }
@@ -391,6 +421,10 @@ export function disconnectVehicleWS() {
   if (_wsReconnectTimer) {
     clearTimeout(_wsReconnectTimer);
     _wsReconnectTimer = null;
+  }
+  if (_wsFallbackTimer) {
+    clearInterval(_wsFallbackTimer);
+    _wsFallbackTimer = null;
   }
   if (_wsInstance) {
     _wsInstance.onclose = null;

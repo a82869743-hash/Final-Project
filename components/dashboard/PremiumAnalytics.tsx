@@ -22,19 +22,31 @@ interface PremiumAnalyticsProps {
   alerts: Alert[];
 }
 
+const MORTH_2018_SLOTS: [string, number][] = [
+  ["00-03", 25407], ["03-06", 26571], ["06-09", 51489], ["09-12", 70211],
+  ["12-15", 71392], ["15-18", 81619], ["18-21", 86986], ["21-24", 49162],
+];
+
+function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number }[]; label?: string }) {
+  if (active && payload && payload.length) {
+    return (
+      <div className="glass rounded-[var(--radius-md)] p-3 border border-[var(--color-outline-variant)] shadow-xl">
+        <p className="text-[12px] text-[var(--color-on-surface-muted)] mb-1">{label}</p>
+        <p className="text-[14px] font-bold text-[var(--color-on-surface)]">
+          {payload[0].name}: {payload[0].value}
+        </p>
+      </div>
+    );
+  }
+  return null;
+}
+
 export default function PremiumAnalytics({ vehicles, alerts }: PremiumAnalyticsProps) {
-  // Compute Incidents Timeline (Mock 24h spread based on alerts length)
-  const timelineData = useMemo(() => {
-    const data = [];
-    const baseIncidents = alerts.length * 2;
-    for (let i = 0; i < 24; i += 2) {
-      data.push({
-        time: `${i}:00`,
-        incidents: Math.max(0, baseIncidents + Math.floor(Math.sin(i) * 10) + Math.floor(Math.random() * 5)),
-      });
-    }
-    return data;
-  }, [alerts.length]);
+  // Real national time-of-day profile: MoRTH "Road Accidents in India 2018"
+  // (accidents per 3-hour slot, all India) -> expected accidents per slot per day
+  const timelineData = useMemo(() => MORTH_2018_SLOTS.map(([time, n]) => ({
+    time, incidents: Math.round(n / 365),
+  })), []);
 
   // Compute Severity Breakdown
   const severityData = useMemo(() => {
@@ -64,20 +76,6 @@ export default function PremiumAnalytics({ vehicles, alerts }: PremiumAnalyticsP
     ].filter(item => item.value > 0);
   }, [vehicles]);
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="glass rounded-[var(--radius-md)] p-3 border border-[var(--color-outline-variant)] shadow-xl">
-          <p className="text-[12px] text-[var(--color-on-surface-muted)] mb-1">{label}</p>
-          <p className="text-[14px] font-bold text-[var(--color-on-surface)]">
-            {payload[0].name}: {payload[0].value}
-          </p>
-        </div>
-      );
-    }
-    return null;
-  };
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in mt-6">
       
@@ -85,7 +83,7 @@ export default function PremiumAnalytics({ vehicles, alerts }: PremiumAnalyticsP
       <div className="glass rounded-[var(--radius-lg)] p-5 col-span-1 lg:col-span-2 shadow-lg relative overflow-hidden group">
         <div className="absolute inset-0 bg-gradient-to-br from-[#3b82f6]/5 to-transparent z-0 pointer-events-none" />
         <h3 className="text-[14px] font-[var(--font-display)] font-semibold uppercase tracking-wider text-[var(--color-on-surface-muted)] mb-6 z-10 relative">
-          Incidents Timeline (24h)
+          Accidents by Time of Day · India/day (MoRTH 2018)
         </h3>
         <div className="h-[250px] w-full z-10 relative">
           <ResponsiveContainer width="100%" height="100%">

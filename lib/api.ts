@@ -7,8 +7,17 @@ const IS_PROD = process.env.NODE_ENV === "production";
 const RENDER_BACKEND = "https://final-project-qly6.onrender.com";
 const RENDER_WS = "wss://final-project-qly6.onrender.com";
 
-const API_BASE = IS_PROD ? `${RENDER_BACKEND}/api` : "http://127.0.0.1:8000/api";
-const WS_BASE = IS_PROD ? `${RENDER_WS}/ws` : "ws://127.0.0.1:8000/ws";
+// NEXT_PUBLIC_API_URL (e.g. https://my-backend.onrender.com) overrides the defaults
+const ENV_BACKEND = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+const BACKEND = ENV_BACKEND || (IS_PROD ? RENDER_BACKEND : "http://127.0.0.1:8000");
+export const API_BASE = `${BACKEND}/api`;
+export const WS_BASE = ENV_BACKEND
+  ? `${ENV_BACKEND.replace(/^http/, "ws")}/ws`
+  : IS_PROD ? `${RENDER_WS}/ws` : "ws://127.0.0.1:8000/ws";
+
+/** Loosely-typed backend payloads (shape varies by mode; narrowed at the call site). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Loose = any;
 
 // ── Types matching backend schemas ──
 
@@ -50,11 +59,24 @@ export interface PredictionRequest {
   historical_incidents: number;
 }
 
+export interface RiskFactor {
+  factor: string;
+  value: string;
+  detail: string;
+  impact: "up" | "down" | "neutral";
+}
+
 export interface PredictionResponse {
   risk_score: number;
   risk_level: "low" | "medium" | "high" | "critical";
   confidence: number;
   recommended_ambulances: number;
+  model_version?: string;
+  warning?: string;
+  percentile?: number | null;
+  nearest_city?: string | null;
+  p_fatal_or_serious?: number | null;
+  factors?: RiskFactor[];
 }
 
 export interface AnalysisResponse {
@@ -98,7 +120,7 @@ export interface AnalyticsStats {
   avg_eta: number | string;
   active_vehicles: number;
   high_risk_zones: number;
-  recent_dispatches?: any[];
+  recent_dispatches?: Loose[];
 }
 
 export interface AccidentRiskRequest {
@@ -106,14 +128,27 @@ export interface AccidentRiskRequest {
   longitude: number;
   traffic_density?: number;
   time?: string;
+  weather?: number;        // 0 clear, 1 rain, 2 fog, 3 storm/hail
+  speed_kmh?: number;
+  highway?: boolean;
+  vehicles?: number;
+  casualties?: number;
+  pedestrian?: boolean;
 }
 
 export interface AccidentRiskResponse {
   risk_level: "Low" | "Medium" | "High";
   risk_score: number;
+  percentile: number;
   confidence: number;
   color: string;
-  features_used: Record<string, number>;
+  p_fatal_or_serious: number;
+  expected_deaths_per_hour: number;
+  nearest_city: string;
+  distance_km: number;
+  in_coverage: boolean;
+  factors: RiskFactor[];
+  features_used: Record<string, unknown>;
 }
 
 export interface RiskZone {
@@ -123,6 +158,94 @@ export interface RiskZone {
   color: string;
   accident_count: number;
   radius: number;
+  deaths?: number | null;
+  fatality_rate?: number | null;
+  risk_index?: number;
+  area?: string;
+  state?: string;
+  source?: string;
+}
+
+// ── Hospitals ──
+
+export type CapacityStatus = "normal" | "moderate" | "high" | "critical";
+
+export interface WardStatus {
+  label: string;
+  capacity: number;
+  occupied: number;
+  available: number;
+  occupancy_pct: number;
+  status: CapacityStatus;
+  critical_care: boolean;
+}
+
+export interface Hospital {
+  id: string;
+  name: string;
+  city: string;
+  state: string;
+  lat: number;
+  lng: number;
+  type: "Government" | "Private";
+  total_beds: number;
+  trauma_level: number;
+  wards: Record<string, WardStatus>;
+  occupied_beds: number;
+  capacity_beds: number;
+  available_beds: number;
+  occupancy_pct: number;
+  critical_beds_available: number;
+  status: CapacityStatus;
+  accepting_critical: boolean;
+  oxygen_pct: number;
+  blood_units: number;
+  doctors_on_duty: number;
+  er_wait_min: number;
+  admissions_hr: number;
+  discharges_hr: number;
+  incoming_ambulances: number;
+  history?: { t: string; occupancy: number; icu: number }[];
+}
+
+export interface HospitalSummary {
+  timestamp: string;
+  total_hospitals: number;
+  total_beds: number;
+  occupied_beds: number;
+  available_beds: number;
+  occupancy_pct: number;
+  icu_available: number;
+  ventilators_available: number;
+  critical_beds_available: number;
+  hospitals_on_diversion: number;
+  incoming_ambulances: number;
+  wards: Record<string, Omit<WardStatus, "critical_care"> & { critical_care: boolean }>;
+  cities: { city: string; hospitals: number; capacity: number; occupied: number; icu_available: number; occupancy_pct: number }[];
+  trend: { t: string; occupancy: number }[];
+  data_mode: string;
+}
+
+export interface HospitalAlert {
+  severity: "critical" | "warning";
+  hospital: string;
+  city: string;
+  message: string;
+}
+
+export interface HospitalRecommendation {
+  id: string;
+  name: string;
+  city: string;
+  lat: number;
+  lng: number;
+  distance_km: number;
+  eta_min: number;
+  need: string;
+  ward_available: number;
+  er_wait_min: number;
+  accepting_critical: boolean;
+  score: number;
 }
 
 export interface EmergencyRequest {
@@ -131,10 +254,10 @@ export interface EmergencyRequest {
 }
 
 export interface EmergencyResponse {
-  nearest_ambulance: any;
-  nearest_hospital: any;
-  all_nearby_ambulances: any[];
-  all_nearby_hospitals: any[];
+  nearest_ambulance: Loose;
+  nearest_hospital: Loose;
+  all_nearby_ambulances: Loose[];
+  all_nearby_hospitals: Loose[];
   incident_location: { latitude: number; longitude: number };
 }
 
@@ -154,7 +277,7 @@ export interface VoiceIntentResponse {
   action_result: {
     type: string;
     message: string;
-    data: any;
+    data: Loose;
   };
   pipeline: string;
 }
@@ -181,6 +304,7 @@ async function fetchWithTimeout(
 async function get<T>(path: string, options: RequestInit & { timeout?: number } = {}): Promise<T> {
   const res = await fetchWithTimeout(`${API_BASE}${path}`, {
     cache: "no-store",
+    ...options,
   });
   if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
   return res.json();
@@ -197,10 +321,11 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json();
 }
 
-async function postForm<T>(path: string, formData: FormData): Promise<T> {
+async function postForm<T>(path: string, formData: FormData, timeout = FETCH_TIMEOUT): Promise<T> {
   const res = await fetchWithTimeout(`${API_BASE}${path}`, {
     method: "POST",
     body: formData,
+    timeout,
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
@@ -214,7 +339,7 @@ export const api = {
   getAlerts: () => get<Alert[]>("/alerts"),
   getVehicles: () => get<Vehicle[]>("/vehicles"),
   getAnalytics: () => get<AnalyticsStats>("/analytics"),
-  async predict(body: any): Promise<PredictionResponse> {
+  async predict(body: Record<string, unknown>): Promise<PredictionResponse> {
     return post<PredictionResponse>("/predict", body);
   },
   
@@ -240,10 +365,10 @@ export const api = {
     return postForm<{ partial_text?: string; status?: string; error?: string }>("/stream-transcribe", fd);
   },
 
-  async analyzeFull(fileOrBlob: Blob | File): Promise<any> {
+  async analyzeFull(fileOrBlob: Blob | File): Promise<Loose> {
     const fd = new FormData();
     fd.append("file", fileOrBlob, "audio.webm");
-    return postForm<any>("/analyze-full", fd);
+    return postForm<Loose>("/analyze-full", fd);
   },
 
   dispatch: (data: DispatchRequest) =>
@@ -254,13 +379,25 @@ export const api = {
   predictRisk: (body: AccidentRiskRequest) =>
     post<AccidentRiskResponse>("/predict-risk", body),
   getRiskZones: () => get<{ zones: RiskZone[]; total: number }>("/risk-zones"),
+  getRiskModel: () => get<Record<string, unknown>>("/risk-model"),
+
+  // ── Live hospital monitoring ──
+  getHospitals: (city?: string) =>
+    get<{ hospitals: Hospital[]; total: number }>(`/hospitals${city ? `?city=${encodeURIComponent(city)}` : ""}`),
+  getHospitalSummary: () => get<HospitalSummary>("/hospitals/summary"),
+  getHospitalAlerts: (limit = 25) => get<{ alerts: HospitalAlert[] }>(`/hospitals/alerts?limit=${limit}`),
+  getHospital: (id: string) => get<Hospital>(`/hospitals/${encodeURIComponent(id)}`),
+  recommendHospitals: (lat: number, lng: number, need = "icu", topN = 5) =>
+    get<{ recommendations: HospitalRecommendation[] }>(`/hospitals/recommend?lat=${lat}&lng=${lng}&need=${need}&top_n=${topN}`),
+  geocode: (q: string) =>
+    get<{ query: string; latitude: number; longitude: number }>(`/geocode?q=${encodeURIComponent(q)}`, { timeout: 12000 }),
   emergency: (body: EmergencyRequest) =>
     post<EmergencyResponse>("/emergency", body),
 
-  async voiceToText(fileOrBlob: Blob | File): Promise<any> {
+  async voiceToText(fileOrBlob: Blob | File): Promise<Loose> {
     const fd = new FormData();
     fd.append("file", fileOrBlob, "audio.webm");
-    return postForm<any>("/voice-to-text", fd);
+    return postForm<Loose>("/voice-to-text", fd);
   },
 
   async voiceIntent(fileOrBlob: Blob | File): Promise<VoiceIntentResponse> {
@@ -269,10 +406,10 @@ export const api = {
     return postForm<VoiceIntentResponse>("/voice-intent", fd);
   },
 
-  async liveVoice(audioBlob: Blob): Promise<any> {
+  async liveVoice(audioBlob: Blob): Promise<Loose> {
     const fd = new FormData();
     fd.append("file", audioBlob, "live_chunk.webm");
-    return postForm<any>("/live-voice", fd);
+    return postForm<Loose>("/live-voice", fd);
   },
 
   /** Send pre-transcribed text (from browser Speech API) for intent detection */
@@ -307,7 +444,7 @@ export function connectVehicleWS(
   onError?: (err: Event) => void,
   onStateChange?: (state: "CONNECTING" | "RECONNECTING" | "CONNECTED" | "FAILED" | "POLLING") => void
 ): void {
-  // Clean up any existing connection
+  // Clean up Loose existing connection
   if (_wsInstance) {
     _wsInstance.onclose = null;
     _wsInstance.close();
@@ -436,7 +573,7 @@ export function disconnectVehicleWS() {
 
 // ════════════════════════════════════════════════════════════════
 // VIDEO INTELLIGENCE MODULE — New types & API functions
-// Does NOT modify any existing type or function above.
+// Does NOT modify Loose existing type or function above.
 // ════════════════════════════════════════════════════════════════
 
 export interface VideoAnalysisResponse {
@@ -507,6 +644,8 @@ export interface VideoAIStatus {
   frame_interval: number;
   confidence_threshold: number;
   alert_threshold: number;
+  detector?: string;
+  capabilities?: string[];
 }
 
 // Video Intelligence API
@@ -522,7 +661,14 @@ export const videoApi = {
     fd.append("video_source", opts.videoSource ?? "upload");
     fd.append("frame_interval", String(opts.frameInterval ?? 5));
     fd.append("async_mode", String(opts.asyncMode ?? false));
-    return postForm<VideoAnalysisResponse>("/video/analyze", fd);
+    // Video analysis can take minutes on CPU — the default 10s timeout aborted it
+    const res = await fetchWithTimeout(`${API_BASE}/video/analyze`, { method: "POST", body: fd, timeout: 300000 });
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try { detail = (await res.json()).detail ?? detail; } catch { /* not JSON */ }
+      throw new Error(detail);
+    }
+    return res.json();
   },
 
   getEvents: (limit = 50) =>
@@ -533,7 +679,7 @@ export const videoApi = {
 
 // ── Video Alert WebSocket ──
 
-const WS_VIDEO_BASE = IS_PROD ? `${RENDER_WS}/ws/video` : "ws://127.0.0.1:8000/ws/video";
+const WS_VIDEO_BASE = `${WS_BASE}/video`;
 
 let _videoWsInstance: WebSocket | null = null;
 let _videoWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;

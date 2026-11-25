@@ -64,11 +64,20 @@ export default function DispatchPage() {
     setDispatching(true);
     setDispatchResult(null);
     try {
+      // Geocode the typed location (was a random point near Mumbai regardless of input)
+      let geo: { latitude: number; longitude: number };
+      try {
+        geo = await api.geocode(incidentLocation);
+      } catch {
+        showToast(`Couldn't find "${incidentLocation}" — try a more specific place name`, "error");
+        setDispatching(false);
+        return;
+      }
       const result = await api.dispatch({
         vehicle_id: selectedVehicle,
         incident_location: incidentLocation,
-        incident_lat: 19.076 + Math.random() * 0.05,
-        incident_lng: 72.877 + Math.random() * 0.05,
+        incident_lat: geo.latitude,
+        incident_lng: geo.longitude,
         priority: "high",
       });
       setDispatchResult(result);

@@ -11,10 +11,11 @@ Fixed: No mock fallback — always shows real transcription.
 import os
 import io
 import asyncio
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, Form
+from typing import Optional
 from services.voice_processing import transcribe_audio_bytes
 from services.intent_detector import detect_intent
-from services.emergency_service import get_emergency_response
+from services.action_router import route
 
 router = APIRouter()
 
@@ -44,7 +45,8 @@ async def voice_to_text(file: UploadFile = File(...)):
 
 
 @router.post("/voice-intent")
-async def voice_intent(file: UploadFile = File(...)):
+async def voice_intent(file: UploadFile = File(...), latitude: Optional[float] = Form(None),
+                       longitude: Optional[float] = Form(None)):
     """
     Full voice interaction pipeline:
     Audio -> Whisper Transcription -> Intent Detection -> Action Routing
@@ -96,7 +98,7 @@ async def voice_intent(file: UploadFile = File(...)):
     intent_result = detect_intent(text)
 
     # Step 3: Route action based on intent
-    action_result = await _route_action(intent_result)
+    action_result = await asyncio.to_thread(route, intent_result, latitude, longitude)
 
     return {
         "transcription": text,
@@ -130,65 +132,11 @@ async def live_voice(file: UploadFile = File(...)):
 
     action_result = None
     if intent_result["confidence"] >= 0.3:
-        action_result = await _route_action(intent_result)
+        action_result = await asyncio.to_thread(route, intent_result, None, None, False)
 
     return {
         "status": "processed",
         "text": text,
         "intent": intent_result,
         "action_result": action_result,
-    }
-
-
-async def _route_action(intent_result: dict) -> dict:
-    """Route detected intent to the appropriate system action."""
-    action = intent_result.get("action", "none")
-    location = intent_result.get("extracted_location")
-
-    # Use extracted coordinates, or default Mumbai center
-    lat = location["latitude"] if location else 19.076
-    lng = location["longitude"] if location else 72.877
-    loc_name = location["name"] if location else "current location"
-
-    if action == "emergency":
-        emergency_data = get_emergency_response(lat, lng)
-        return {
-            "type": "emergency",
-            "message": f"Emergency response triggered for {loc_name}",
-            "data": emergency_data,
-        }
-
-    elif action == "locate_help":
-        emergency_data = get_emergency_response(lat, lng)
-        return {
-            "type": "help",
-            "message": f"Nearest help located for {loc_name}",
-            "data": emergency_data,
-        }
-
-    elif action == "show_traffic":
-        return {
-            "type": "traffic",
-            "message": f"Showing traffic congestion data for {loc_name}",
-            "data": {
-                "redirect": "/dashboard",
-                "location": location,
-            }
-        }
-
-    elif action == "predict_risk":
-        return {
-            "type": "risk",
-            "message": f"Risk prediction for {loc_name}",
-            "data": {
-                "redirect": "/dashboard",
-                "location": location,
-                "coordinates": {"latitude": lat, "longitude": lng}
-            }
-        }
-
-    return {
-        "type": "general",
-        "message": f"Processed voice command: '{intent_result.get('description', '')}'",
-        "data": {"location": location}
     }

@@ -27,63 +27,70 @@ INDIAN_CITIES = {
 }
 
 def _generate_vehicles(count: int) -> list[dict]:
-    vehicles = []
-    cities = list(INDIAN_CITIES.keys())
+    """Ambulances are stationed at real hospitals from the registry and
+    dispatched toward real accident-risk zones produced by the ML pipeline."""
+    from services.hospital_registry import HOSPITALS
     statuses = ["available", "en_route", "on_scene", "critical", "offline"]
     status_weights = [0.5, 0.2, 0.15, 0.05, 0.1]
-    
+    rnd = random.Random(7)
+    vehicles = []
     for i in range(1, count + 1):
-        city = random.choice(cities)
-        base_lat = INDIAN_CITIES[city]["lat"]
-        base_lng = INDIAN_CITIES[city]["lng"]
-        
-        # Add random jitter for realistic city spread (~10-20km)
-        lat = base_lat + random.uniform(-0.15, 0.15)
-        lng = base_lng + random.uniform(-0.15, 0.15)
-        
-        status = random.choices(statuses, weights=status_weights)[0]
-        speed = 0
-        if status in ["en_route", "critical"]:
-            speed = random.randint(40, 90)
-            
+        h = HOSPITALS[(i - 1) % len(HOSPITALS)]
+        status = rnd.choices(statuses, weights=status_weights)[0]
+        lat = h[4] + rnd.uniform(-0.04, 0.04)
+        lng = h[5] + rnd.uniform(-0.04, 0.04)
+        moving = status in ("en_route", "critical")
         vehicles.append({
             "id": f"AMB-{i:03d}",
-            "name": f"Unit-{i:03d}",
-            "lat": lat,
-            "lng": lng,
-            "status": status,
-            "speed": speed,
-            "heading": random.randint(0, 359),
-            "driver": f"Driver-{i}",
-            "destination": f"Hospital {city}" if status in ["en_route", "critical"] else ""
+            "name": f"{'ALS' if i % 3 else 'BLS'}-{h[2][:3].upper()}-{i:03d}",
+            "lat": lat, "lng": lng, "status": status,
+            "speed": rnd.randint(35, 80) if moving else 0,
+            "heading": rnd.randint(0, 359),
+            "driver": f"Crew {i:03d}",
+            "destination": h[1] if moving else "",
+            "_home": (h[4], h[5]),
         })
     return vehicles
 
+
 def _generate_alerts(count: int) -> list[dict]:
+    """Alerts derived from ML risk zones (real locations) + live hospital capacity."""
+    import json, os
     alerts = []
-    cities = list(INDIAN_CITIES.keys())
-    severities = ["critical", "warning", "info"]
-    severity_weights = [0.3, 0.5, 0.2]
-    
+    zones_path = os.path.join(os.path.dirname(__file__), "..", "ml", "risk_zones.json")
+    zones = []
+    try:
+        with open(zones_path) as f:
+            zones = json.load(f)
+    except Exception:
+        pass
     titles = {
-        "critical": ["Multi-vehicle collision", "Cardiac arrest reported", "Major trauma incident", "Severe burn emergency"],
-        "warning": ["Delayed response time", "High traffic zone - reroute", "Oxygen supply low", "Minor collision"],
-        "info": ["Maintenance due", "Shift change", "Routine patrol", "Unit restocked"]
+        "High": ["Multi-vehicle collision", "Major trauma incident", "Pedestrian hit — critical"],
+        "Medium": ["Two-wheeler collision", "Minor collision — injuries reported", "Vehicle overturned"],
     }
-    
-    for i in range(1, count + 1):
-        city = random.choice(cities)
-        severity = random.choices(severities, weights=severity_weights)[0]
-        title = random.choice(titles[severity])
-        minutes_ago = random.randint(1, 45)
-        
+    rnd = random.Random()
+    # Incident feed: cities drawn in proportion to their real MoRTH 2022 accident counts
+    picks = rnd.choices(zones, weights=[z["accident_count"] for z in zones], k=max(0, count - 6)) if zones else []
+    for i, z in enumerate(picks, start=1):
+        fr = z.get("fatality_rate") or 0.3
+        lvl = "High" if rnd.random() < min(0.9, fr * 1.6) else "Medium"
+        sev = "critical" if lvl == "High" else "warning"
+        lat = z["lat"] + rnd.uniform(-0.06, 0.06)
+        lng = z["lng"] + rnd.uniform(-0.06, 0.06)
         alerts.append({
-            "id": f"ALT-{i:03d}",
-            "severity": severity,
-            "title": f"{title} ({city})",
-            "location": f"Sector {random.randint(1,20)}, {city}",
-            "time": f"{minutes_ago} min ago"
+            "id": f"ALT-{i:03d}", "severity": sev,
+            "title": f"{rnd.choice(titles[lvl])} ({z.get('area', 'India')})",
+            "location": f"{z.get('area', '')}, {z.get('state', '')} ({lat:.3f}, {lng:.3f})",
+            "time": f"{rnd.randint(1, 45)} min ago",
         })
+    try:
+        from services.hospital_registry import get_alerts as hosp_alerts
+        for j, a in enumerate(hosp_alerts(6), start=len(alerts) + 1):
+            alerts.append({"id": f"ALT-{j:03d}", "severity": "critical" if a["severity"] == "critical" else "info",
+                           "title": f"{a['message']} — {a['hospital']}", "location": a["city"],
+                           "time": "live"})
+    except Exception:
+        pass
     return alerts
 
 # ── Initial vehicle fleet ──
@@ -92,14 +99,48 @@ _vehicles: list[dict] = _generate_vehicles(75)
 # ── Alerts ──
 _alerts: list[dict] = _generate_alerts(20)
 
+def _incidents_today() -> int:
+    """Expected accidents so far today across the 53 MoRTH cities:
+    2022 annual total / 365, accumulated through the real national time-of-day profile."""
+    try:
+        from services import real_risk
+        card = real_risk.model_card()
+        meta = real_risk._meta
+        annual = sum(p["accidents_2022"] or 0 for p in meta["city_profiles"].values())
+        prof = [card["india_national_time_profile_2018"][s] for s in card["slots"]]
+        now = datetime.now()
+        h = now.hour + now.minute / 60
+        done = sum(prof[: int(h // 3)]) + prof[int(h // 3)] * ((h % 3) / 3)
+        return int(annual / 365 * done)
+    except Exception:
+        return 0
+
+
+def _avg_response_minutes() -> float:
+    """Median remaining ETA of units currently responding (distance / 30 km/h).
+    Median, so one long inter-city transfer doesn't distort the KPI."""
+    import math
+    etas = []
+    for v in _vehicles:
+        if v["status"] in ("en_route", "critical"):
+            tlat, tlng = v.get("_target") or v.get("_home", (v["lat"], v["lng"]))
+            km = math.hypot((tlat - v["lat"]) * 111, (tlng - v["lng"]) * 111 * math.cos(math.radians(v["lat"])))
+            etas.append(km / 0.5)
+    if not etas:
+        return 0.0
+    etas.sort()
+    mid = len(etas) // 2
+    return round(etas[mid] if len(etas) % 2 else (etas[mid - 1] + etas[mid]) / 2, 1)
+
+
 def get_dashboard_stats() -> DashboardStats:
     """Compute dashboard summary from current vehicle/alert state."""
     active = sum(1 for v in _vehicles if v["status"] != "offline")
     critical = sum(1 for a in _alerts if a["severity"] == "critical")
     return DashboardStats(
         active_ambulances=active,
-        avg_response_time=round(3.8 + random.uniform(-0.5, 0.5), 1),
-        incidents_today=150 + random.randint(0, 30), # Scaled up for Pan-India
+        avg_response_time=_avg_response_minutes(),
+        incidents_today=_incidents_today(),
         critical_alerts=critical,
     )
 
@@ -109,7 +150,7 @@ def get_alerts() -> list[Alert]:
 
 def get_vehicles() -> list[Vehicle]:
     """Return all vehicles."""
-    return [Vehicle(**v) for v in _vehicles]
+    return [Vehicle(**{k: val for k, val in v.items() if not k.startswith("_")}) for v in _vehicles]
 
 def simulate_vehicle_movement():
     """
@@ -136,14 +177,20 @@ def simulate_vehicle_movement():
             v["speed"] = random.randint(60, 90)
             
         if v["status"] in ("en_route", "critical"):
-            # Speed constraints based on time context (slower at peak, faster at night)
-            if is_peak:
-                v["lat"] += random.uniform(-0.0004, 0.0004) # Slower movement
-                v["lng"] += random.uniform(-0.0004, 0.0004)
-            else:
-                v["lat"] += random.uniform(-0.0008, 0.0008) # Normal/fast movement
-                v["lng"] += random.uniform(-0.0008, 0.0008)
-                
+            # Drive toward the destination hospital; slower in peak traffic
+            step = 0.0004 if is_peak else 0.0008
+            tlat, tlng = v.get("_target") or v.get("_home", (v["lat"], v["lng"]))
+            dlat, dlng = tlat - v["lat"], tlng - v["lng"]
+            dist = (dlat ** 2 + dlng ** 2) ** 0.5
+            if dist < 0.002:
+                v["status"] = "on_scene"
+                v["speed"] = 0
+                v.pop("_target", None)
+                continue
+            import math
+            v["lat"] += dlat / dist * step + random.uniform(-0.0001, 0.0001)
+            v["lng"] += dlng / dist * step + random.uniform(-0.0001, 0.0001)
+            v["heading"] = int((math.degrees(math.atan2(dlng, dlat)) + 360) % 360)
             v["speed"] = max(0, v["speed"] + random.uniform(-5, 5))
             
         elif v["status"] == "on_scene":
@@ -160,6 +207,7 @@ def assign_vehicle(vehicle_id: str, destination: str, lat: float, lng: float) ->
         if v["id"] == vehicle_id:
             v["status"] = "en_route"
             v["destination"] = destination
+            v["_target"] = (lat, lng)
             v["speed"] = 60 + random.randint(0, 25)
             return v
     return None

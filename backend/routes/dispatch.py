@@ -4,7 +4,6 @@ from fastapi import APIRouter, HTTPException
 from models.schemas import DispatchRequest, DispatchResponse
 from services.data_store import assign_vehicle
 from db import log_dispatch
-import random
 
 router = APIRouter()
 
@@ -26,7 +25,12 @@ async def dispatch(request: DispatchRequest):
     if result is None:
         raise HTTPException(status_code=404, detail="Vehicle not found")
 
-    eta = round(2.5 + random.uniform(0.5, 6.0), 1)
+    # ETA from real great-circle distance at ~30 km/h average urban ambulance speed
+    import math
+    p1, p2 = math.radians(result["lat"]), math.radians(request.incident_lat)
+    dp, dl = p2 - p1, math.radians(request.incident_lng - result["lng"])
+    km = 2 * 6371 * math.asin(math.sqrt(math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2))
+    eta = round(max(1.0, km / 0.5), 1)
 
     global _last_dispatch
     try:
@@ -45,7 +49,6 @@ async def dispatch(request: DispatchRequest):
             vehicle_data = {"id": request.vehicle_id}
             hotspot_data = {"lat": request.incident_lat, "lng": request.incident_lng}
             
-            # Mock risk score depending on priority enum since predict obj isn't directly passed inside dispatch request
             risk_score = 0.85 if request.priority == "critical" else 0.6 if request.priority == "high" else 0.3
             prediction_data = {"risk_score": risk_score, "risk_level": request.priority}
             

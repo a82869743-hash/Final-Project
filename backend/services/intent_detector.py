@@ -73,39 +73,35 @@ def detect_intent(text: str) -> dict:
 
     text_lower = text.lower().strip()
 
-    best_intent = "unknown"
-    best_score = 0.0
-    best_action = "none"
-    best_desc = "No intent detected"
-    best_priority = "low"
-    best_keywords: list[str] = []
-
+    # Word-boundary matching (plain substring matching made "hit" match
+    # "Whitefield" and "jam" match "Jamshedpur"). Score = number of distinct
+    # keyword hits, weighted by how urgent the intent is, so
+    # "accident ... someone is bleeding" stays an accident, not a generic help call.
+    weight = {"critical": 1.3, "high": 1.15, "normal": 1.0}
+    scored = []
     for intent_name, config in INTENT_MAP.items():
-        keywords = config["keywords"]
-        matched = [kw for kw in keywords if kw in text_lower]
+        matched = [kw for kw in config["keywords"]
+                   if re.search(rf"\b{re.escape(kw)}\b", text_lower)]
+        if matched:
+            scored.append((len(matched) * weight.get(config["priority"], 1.0), intent_name, matched))
 
-        # Weight by number of matched keywords relative to total
-        score = len(matched) / max(len(keywords), 1)
-
-        # Bonus for multiple keyword matches (stronger signal)
-        if len(matched) >= 2:
-            score = min(1.0, score + 0.15)
-
-        if score > best_score:
-            best_score = score
-            best_intent = intent_name
-            best_action = config["action"]
-            best_desc = config["description"]
-            best_priority = config["priority"]
-            best_keywords = matched
-
-    # Confidence scaling
-    if best_score == 0:
-        confidence = 0.1
-    elif best_score < 0.1:
-        confidence = 0.3
+    if scored:
+        scored.sort(reverse=True)
+        best_score, best_intent, best_keywords = scored[0]
+        cfg = INTENT_MAP[best_intent]
+        best_action, best_desc, best_priority = cfg["action"], cfg["description"], cfg["priority"]
+        # injuries reported in an accident/fire -> critical; help calls with injuries -> high
+        injury = any(re.search(rf"\b{w}\b", text_lower) for w in
+                     ("bleeding", "unconscious", "injured", "dying", "not breathing", "trapped", "dead"))
+        if injury and best_priority == "high":
+            best_priority = "critical"
+        second = scored[1][0] if len(scored) > 1 else 0
+        margin = (best_score - second) / best_score
+        confidence = min(0.97, 0.5 + 0.12 * len(best_keywords) + 0.25 * margin)
     else:
-        confidence = min(0.95, 0.35 + best_score * 0.6)
+        best_intent, best_action, best_desc, best_priority, best_keywords = (
+            "unknown", "none", "No emergency intent detected", "low", [])
+        confidence = 0.1
 
     # Extract location from text using geocoding
     location = extract_location_smart(text)
@@ -200,7 +196,8 @@ def _extract_location_phrase(text: str) -> Optional[str]:
     # Sort by length descending so "navi mumbai" matches before "mumbai"
     sorted_cities = sorted(INDIAN_CITIES, key=len, reverse=True)
     for city in sorted_cities:
-        if city in text_lower:
+        # word boundaries: "leh" must not match "vehicle", "goa" not "goal"
+        if city != "sector" and re.search(rf"\b{re.escape(city)}\b", text_lower):
             return city.title()
 
     # Step 2: Regex patterns for location phrases
@@ -214,13 +211,18 @@ def _extract_location_phrase(text: str) -> Optional[str]:
                  "please", "help", "send", "need", "very", "really",
                  "major", "big", "small", "two", "three", "multiple",
                  "people", "person", "vehicle", "car", "bus", "truck",
-                 "immediately", "quickly", "fast", "soon", "right now"}
+                 "immediately", "quickly", "fast", "soon", "right now",
+                 "highway", "road", "the road", "the highway", "street", "expressway", "junction",
+                 "flyover", "bridge", "signal", "traffic", "area", "city", "my area", "here now",
+                 "fire", "the way", "way", "home", "office", "duty", "time"}
 
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             location = match.group(1).strip()
-            if location.lower() in skip_words or len(location) < 3:
+            if (location.lower() in skip_words or len(location) < 3
+                    or location.lower().split()[0] in {"the", "a", "my", "this", "that"} and
+                    location.lower().split()[-1] in skip_words):
                 continue
             return location
 
@@ -246,7 +248,43 @@ def _extract_location_phrase(text: str) -> Optional[str]:
     return None
 
 
+_GEO_CACHE: dict[str, Optional[tuple]] = {}
+
+
+def _offline_city(location_name: str) -> Optional[tuple]:
+    """Fallback when Nominatim is unreachable: real-data city list + hospital registry."""
+    key = location_name.lower().strip()
+    alias = {"bangalore": "bengaluru", "bombay": "mumbai", "madras": "chennai", "calcutta": "kolkata",
+             "vizag": "visakhapatnam", "trichy": "tiruchirappalli", "trivandrum": "thiruvananthapuram",
+             "allahabad": "prayagraj", "cochin": "kochi", "calicut": "kozhikode", "nasik": "nashik"}
+    key = alias.get(key, key)
+    try:
+        from ml.real_pipeline import CITIES
+        for name, _state, lat, lng in CITIES.values():
+            if name.lower().split("-")[0] == key:
+                return (lat, lng)
+    except Exception:
+        pass
+    try:
+        from services.hospital_registry import HOSPITALS
+        for h in HOSPITALS:
+            if h[2].lower() == key:
+                return (h[4], h[5])
+    except Exception:
+        pass
+    return None
+
+
 def _geocode_location(location_name: str) -> Optional[tuple]:
+    key = location_name.lower().strip()
+    if key in _GEO_CACHE:
+        return _GEO_CACHE[key]
+    coords = _geocode_nominatim(location_name) or _offline_city(location_name)
+    _GEO_CACHE[key] = coords
+    return coords
+
+
+def _geocode_nominatim(location_name: str) -> Optional[tuple]:
     """
     Geocode a location name to (latitude, longitude) using
     OpenStreetMap Nominatim API (free, no key needed).

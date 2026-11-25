@@ -86,16 +86,8 @@ function useAnimatedPositions(vehicles: Vehicle[]) {
         }
       }
 
-      // Add slight random drift to simulate real-time GPS movement
-      const drift = 0.0008;
-      const driftLat = (Math.random() - 0.5) * drift;
-      const driftLng = (Math.random() - 0.5) * drift;
-
-      targets.current[v.id] = {
-        lat: v.lat + driftLat,
-        lng: v.lng + driftLng,
-        h: heading,
-      };
+      // Animate toward the real reported position (no fake GPS drift)
+      targets.current[v.id] = { lat: v.lat, lng: v.lng, h: heading };
 
       // Initialize current position if new
       if (!current.current[v.id]) {
@@ -142,26 +134,6 @@ function useAnimatedPositions(vehicles: Vehicle[]) {
     frameRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameRef.current);
   }, []);
-
-  // Trigger new drift every 3 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      for (const v of vehicles) {
-        if (v.status === "offline") continue;
-        const drift = v.speed > 0 ? 0.002 : 0.0005;
-        const angle = Math.random() * Math.PI * 2;
-        const cur = current.current[v.id];
-        if (cur) {
-          targets.current[v.id] = {
-            lat: cur.lat + Math.cos(angle) * drift,
-            lng: cur.lng + Math.sin(angle) * drift,
-            h: (angle * 180) / Math.PI,
-          };
-        }
-      }
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [vehicles]);
 
   return positions;
 }
@@ -258,7 +230,7 @@ export default function Map3D({ height = "400px", className = "", vehicles = [],
 
         {/* High-detail OpenStreetMap tiles */}
         <TileLayer
-          url="https://tile.openstreetmap.de/{z}/{x}/{y}.png"
+          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           maxZoom={19}
         />

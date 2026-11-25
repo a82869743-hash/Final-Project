@@ -90,7 +90,20 @@ def find_nearest_ambulance(lat: float, lng: float, top_n: int = 1) -> list[dict]
     """
     df = _load_ambulance_data()
     if df.empty:
-        return [_mock_ambulance(lat, lng)]
+        # Fall back to the live simulated fleet instead of a single mock unit
+        from services.data_store import get_vehicles
+        fleet = [v for v in get_vehicles() if v.status != "offline"]
+        if not fleet:
+            return [_mock_ambulance(lat, lng)]
+        prio = {"available": 0, "on_scene": 1, "en_route": 2, "critical": 3}
+        ranked = sorted(fleet, key=lambda v: (prio.get(v.status, 2), _haversine(lat, lng, v.lat, v.lng)))
+        out = []
+        for v in ranked[:top_n]:
+            d = _haversine(lat, lng, v.lat, v.lng)
+            out.append({"vehicle_id": v.id, "latitude": round(v.lat, 6), "longitude": round(v.lng, 6),
+                        "status": v.status, "distance_km": round(d, 2),
+                        "estimated_arrival_min": round(d / 0.5, 1)})
+        return out
 
     df = df.copy()
     df["distance_km"] = df.apply(
@@ -169,7 +182,9 @@ def find_nearest_hospital(lat: float, lng: float, top_n: int = 1,
     """
     df = _load_hospital_data()
     if df.empty:
-        return [_mock_hospital(lat, lng)]
+        # Fall back to the real-hospital registry instead of a single mock
+        from services.hospital_registry import nearest_hospitals
+        return nearest_hospitals(lat, lng, top_n) or [_mock_hospital(lat, lng)]
 
     df = df.copy()
 

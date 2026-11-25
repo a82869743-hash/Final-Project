@@ -106,6 +106,16 @@ const SkeletonCard = () => (
   </div>
 );
 
+/* City centres used for the real-data risk forecast */
+const CITY_COORDS: Record<string, [number, number]> = {
+  Delhi: [28.6139, 77.209], Mumbai: [19.076, 72.8777], Bangalore: [12.9716, 77.5946],
+  Chennai: [13.0827, 80.2707], Kolkata: [22.5726, 88.3639], Hyderabad: [17.385, 78.4867],
+  Ahmedabad: [23.0225, 72.5714], Pune: [18.5204, 73.8567], Jaipur: [26.9124, 75.7873],
+  Surat: [21.1702, 72.8311], Lucknow: [26.8467, 80.9462], Kanpur: [26.4499, 80.3319],
+  Nagpur: [21.1458, 79.0882], Indore: [22.7196, 75.8577], Bhopal: [23.2599, 77.4126],
+};
+
+
 export default function DashboardPage() {
   const { showToast } = useToast();
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -258,15 +268,12 @@ export default function DashboardPage() {
     let active = true;
     async function fetchPrediction() {
       try {
+        // Real-data engine: selected city (Delhi for "All India") at the forecast hour
+        const c = CITY_COORDS[selectedCity] ?? CITY_COORDS.Delhi;
         const p = await api.predict({
           hour: (new Date().getHours() + forecastOffset) % 24,
-          day_of_week: new Date().getDay(),
-          zone_id: 1,
-          temperature: 28,
-          humidity: 60,
-          traffic_index: Math.min(1.0, 0.7 + (forecastOffset * 0.05)), // Simulate traffic increasing over time
-          population_density: 1.2,
-          historical_incidents: 45 + (forecastOffset * 2), // Simulate escalating incidents
+          latitude: c[0],
+          longitude: c[1],
         });
         if (active) setPrediction(p);
       } catch (err) {
@@ -281,7 +288,7 @@ export default function DashboardPage() {
       active = false;
       clearInterval(interval);
     };
-  }, [forecastOffset]);
+  }, [forecastOffset, selectedCity]);
 
   // Fetch risk zones once on mount
   useEffect(() => {
@@ -595,7 +602,7 @@ export default function DashboardPage() {
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="font-[var(--font-display)] text-[13px] font-semibold tracking-tight text-[var(--color-on-surface)] flex items-center gap-2">
                     <BrainCircuit className="h-4 w-4" style={{ color: riskColor }} />
-                    AI Risk Forecast (Next 1h)
+                    AI Risk Forecast · {prediction.nearest_city ?? "—"} {forecastOffset ? `(+${forecastOffset}h)` : "(now)"}
                   </h3>
                 </div>
                 <div className="flex items-end justify-between">
@@ -607,7 +614,8 @@ export default function DashboardPage() {
                       {prediction.risk_level}
                     </span>
                     <p className="text-[11px] text-[var(--color-on-surface-muted)] mt-1">
-                      Risk Score: {(prediction.risk_score * 100).toFixed(1)}% | Confidence: {(prediction.confidence * 100).toFixed(1)}%
+                      {prediction.percentile != null ? `${prediction.percentile.toFixed(0)}th percentile of Indian city-hours` : `Risk Score: ${(prediction.risk_score * 100).toFixed(1)}%`}
+                      {prediction.p_fatal_or_serious != null && ` · P(fatal/serious) ${(prediction.p_fatal_or_serious * 100).toFixed(1)}%`}
                     </p>
                   </div>
                   <div className="text-right">

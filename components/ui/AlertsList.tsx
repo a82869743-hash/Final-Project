@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowRight, ChevronDown, ChevronUp } from "lucide-react"
 
 import { useToast } from "@/components/ui/Toast";
 import { useDispatchContext } from "@/components/providers/DispatchProvider";
+import { api } from "@/lib/api";
 
 interface Alert {
   id: string;
@@ -32,14 +33,8 @@ const severityStyles = {
   },
 };
 
-// Fallback data when no API response
-const fallbackAlerts: Alert[] = [
-  { id: "ALT-001", severity: "critical", title: "Multi-vehicle collision — 3 casualties", location: "MG Road & Ring Road Junction", time: "2 min ago" },
-  { id: "ALT-002", severity: "critical", title: "Cardiac arrest reported", location: "Sector 14, Block C", time: "5 min ago" },
-  { id: "ALT-003", severity: "warning", title: "Ambulance A5 — delayed response", location: "Highway NH-48, KM 22", time: "8 min ago" },
-  { id: "ALT-004", severity: "warning", title: "High traffic zone — reroute suggested", location: "Central Market Area", time: "12 min ago" },
-  { id: "ALT-005", severity: "info", title: "Ambulance A2 — maintenance due", location: "Station Bravo", time: "20 min ago" },
-];
+// No invented alerts when the API is unreachable: show an empty state
+const fallbackAlerts: Alert[] = [];
 
 interface AlertsListProps {
   alerts?: Alert[];
@@ -52,6 +47,28 @@ export default function AlertsList({ alerts }: AlertsListProps) {
   
   const data = alerts && alerts.length > 0 ? alerts : fallbackAlerts;
   const criticalCount = data.filter((a) => a.severity === "critical").length;
+
+  // Real quick-dispatch: locate the alert (coordinates in the text, else geocode),
+  // pick the nearest available ambulance and dispatch it through the API.
+  const quickDispatch = async (alert: Alert) => {
+    try {
+      const m = alert.location.match(/\((-?\d+\.\d+),\s*(-?\d+\.\d+)\)/);
+      const geo = m ? { latitude: +m[1], longitude: +m[2] } : await api.geocode(alert.location.split(",")[0]);
+      const em = await api.emergency({ latitude: geo.latitude, longitude: geo.longitude });
+      const amb = em.nearest_ambulance;
+      if (!amb?.vehicle_id) throw new Error("no ambulance");
+      const d = await api.dispatch({ vehicle_id: amb.vehicle_id, incident_location: alert.title,
+        incident_lat: geo.latitude, incident_lng: geo.longitude, priority: alert.severity === "critical" ? "critical" : "high" });
+      setDispatch({
+        vehicle: { id: amb.vehicle_id, name: amb.vehicle_id, lat: amb.latitude, lng: amb.longitude, status: "en_route", destination: alert.title, speed: 60, heading: 0, driver: "Auto-Dispatch" },
+        hotspot: { lat: geo.latitude, lng: geo.longitude },
+        eta: parseFloat(d.estimated_arrival),
+      });
+      showToast(`${amb.vehicle_id} dispatched to ${alert.title} — ETA ${d.estimated_arrival}`, "success");
+    } catch {
+      showToast(`Could not auto-dispatch to ${alert.location}`, "error");
+    }
+  };
 
   return (
     <div className="card-lifted flex flex-col h-full max-h-[420px] transition-all duration-300">
@@ -77,20 +94,15 @@ export default function AlertsList({ alerts }: AlertsListProps) {
       {/* Alert List */}
       {isExpanded && (
         <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-2 custom-scrollbar">
+          {data.length === 0 && (
+            <p className="px-3 py-6 text-center text-[11px] text-[var(--color-on-surface-muted)]">No active alerts</p>
+          )}
           {data.map((alert, idx) => {
             const style = severityStyles[alert.severity];
             return (
               <div
                 key={alert.id}
-                onClick={() => {
-                  showToast(`AI Copilot overriding: Dispatching rapid response to ${alert.location}`, "success");
-                  // Simulate an instant dispatch to the map
-                  setDispatch({
-                    vehicle: { id: "V-RAPID", name: "Rapid Response", lat: 28.6139, lng: 77.2090, status: "en_route", destination: alert.location, speed: 60, heading: 0, driver: "Auto-Dispatch" },
-                    hotspot: { lat: 28.6200, lng: 77.2200 }, // Slight offset to draw a visible route
-                    eta: Math.random() * 4 + 1
-                  });
-                }}
+                onClick={() => quickDispatch(alert)}
                 className={`group flex items-start gap-3 rounded-[var(--radius-md)] px-3 py-3 transition-all duration-200 cursor-pointer hover:${style.bg} animate-fade-in ${
                   alert.severity === "critical" ? "pulse-active" : ""
                 }`}

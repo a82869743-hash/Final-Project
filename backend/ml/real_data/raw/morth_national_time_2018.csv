@@ -1,0 +1,9 @@
+Time,Number of Accidents,Type
+06:00 - 09:00 hrs,51489,Day
+09:00 - 12:00 hrs ,70211,Day
+12:00 - 15:00 hrs ,71392,Day
+15:00 - 18:00 hrs ,81619,Day
+18:00 - 21:00 hrs ,86986,Night
+21:00 - 24:00 hrs ,49162,Night
+00:00 - 03:00 hrs ,25407,Night
+03:00 - 06:00 hrs ,26571,Night

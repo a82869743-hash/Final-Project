@@ -53,3 +53,5 @@ backend/venv/
 backend/.venv/
 
 .vercel
+backend/data/
+backend/ml/real_data/raw/stats19_collisions_2023.csv

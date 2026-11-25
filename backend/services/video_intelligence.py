@@ -27,8 +27,13 @@ from typing import Any, Optional
 
 logger = logging.getLogger("aegis.video_intelligence")
 
-ENABLE_VIDEO_AI = os.getenv("ENABLE_VIDEO_AI", "true").lower() in ("true", "1", "yes")
-DEMO_MODE = os.getenv("VIDEO_DEMO_MODE", "true").lower() in ("true", "1", "yes")
+# ENABLE_VIDEO_AI now only controls the heavy YOLO deep model. Without it the
+# lightweight OpenCV detector still analyses real frames (fits small servers).
+ENABLE_VIDEO_AI = os.getenv("ENABLE_VIDEO_AI", "false").lower() in ("true", "1", "yes")
+# Demo mode fabricates reports; OFF by default and always labelled when used.
+DEMO_MODE = os.getenv("VIDEO_DEMO_MODE", "false").lower() in ("true", "1", "yes")
+YOLO_WEIGHTS = os.getenv("VIDEO_YOLO_MODEL", "yolov8n.pt")
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRAME_INTERVAL = int(os.getenv("VIDEO_FRAME_INTERVAL", "3"))
 CONFIDENCE_THRESHOLD = float(os.getenv("VIDEO_CONFIDENCE_THRESHOLD", "0.35"))
 ALERT_THRESHOLD = float(os.getenv("VIDEO_ALERT_THRESHOLD", "0.65"))
@@ -91,11 +96,15 @@ def _get_yolo_model():
     global _yolo_model
     if _yolo_model is not None:
         return _yolo_model if _yolo_model is not False else None
+    if not ENABLE_VIDEO_AI:
+        _yolo_model = False; return None
     try:
         from ultralytics import YOLO
-        for v in ("yolov8s.pt", "yolov8n.pt"):  # Prefer s (more accurate) then n (fallback)
+        order = [YOLO_WEIGHTS] + [w for w in ("yolov8n.pt", "yolov8s.pt") if w != YOLO_WEIGHTS]
+        for v in order:
+            path = os.path.join(_BACKEND_DIR, v)
             try:
-                m = YOLO(v); logger.info(f"[VIDEO-AI] Loaded {v}"); _yolo_model = m; return m
+                m = YOLO(path if os.path.exists(path) else v); logger.info(f"[VIDEO-AI] Loaded {v}"); _yolo_model = m; return m
             except Exception as e:
                 logger.warning(f"[VIDEO-AI] Failed {v}: {e}")
     except ImportError:
@@ -419,9 +428,9 @@ def analyze_frame(frame_data) -> dict:
 async def analyze_video(video_path, latitude=0.0, longitude=0.0,
                         video_source="upload", frame_interval=FRAME_INTERVAL):
     """Comprehensive video analysis with full accident report."""
-    if not ENABLE_VIDEO_AI:
-        return {"error": "Video AI disabled", "event_type": "disabled",
-                "severity": "low", "confidence": 0.0}
+    if _get_cv2() is None:
+        return {"error": "OpenCV is not installed on the server (pip install opencv-python-headless)",
+                "event_type": "error", "severity": "low", "confidence": 0.0}
 
     start = time.time()
 
@@ -437,11 +446,17 @@ async def analyze_video(video_path, latitude=0.0, longitude=0.0,
     # Analyze all frames
     results = []
     sev_rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-    for fd in frame_data:
-        try:
-            results.append(analyze_frame(fd))
-        except Exception as e:
-            logger.error(f"Frame analysis error: {e}")
+    def _run_all():
+        out = []
+        for fd in frame_data:
+            try:
+                out.append(analyze_frame(fd))
+            except Exception as e:
+                logger.error(f"Frame analysis error: {e}")
+        return out
+
+    # CPU-heavy: run off the event loop so live WebSockets keep streaming
+    results = await asyncio.to_thread(_run_all)
 
     if not results:
         return {"error": "All frame analyses failed", "event_type": "error",
@@ -537,17 +552,21 @@ async def store_video_event(event_data: dict) -> Optional[dict]:
 
 def get_video_ai_status() -> dict:
     """Get comprehensive AI subsystem status."""
+    import importlib.util
     cv2_ok = _get_cv2() is not None
-    yolo_ok = _get_yolo_model() is not None
-    if not ENABLE_VIDEO_AI: st = "disabled"
-    elif cv2_ok and yolo_ok: st = "online"
-    elif cv2_ok: st = "degraded"
-    elif DEMO_MODE: st = "online"  # Demo mode always reports online
+    # cheap check: don't load the model just to report status
+    yolo_ok = (_yolo_model not in (None, False)) or (
+        ENABLE_VIDEO_AI and importlib.util.find_spec("ultralytics") is not None)
+    if cv2_ok and yolo_ok: st = "online"
+    elif cv2_ok: st = "online"          # real OpenCV detector
+    elif DEMO_MODE: st = "demo"
     else: st = "offline"
     return {
         "status": st,
         "feature_flag": ENABLE_VIDEO_AI,
         "demo_mode": DEMO_MODE,
+        "detector": (f"YOLOv8 ({YOLO_WEIGHTS})" if yolo_ok else "OpenCV heuristic" if cv2_ok
+                     else "unavailable"),
         "opencv_available": cv2_ok,
         "yolo_available": yolo_ok,
         "frame_interval": FRAME_INTERVAL,
@@ -742,6 +761,6 @@ async def generate_demo_report(video_source: str = "upload") -> dict:
         "accident_frames": random.randint(5, 20),
         "accident_frame_ratio": round(random.uniform(0.3, 0.8), 3),
         "processing_time_seconds": round(random.uniform(2.0, 6.0), 2),
-        "detection_method": "yolov8s",
+        "detection_method": "demo-simulated",
         "demo_mode": True,
     }

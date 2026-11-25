@@ -24,7 +24,8 @@ logger = logging.getLogger("aegis.routes.video")
 
 router = APIRouter()
 
-ENABLE_VIDEO_AI = os.getenv("ENABLE_VIDEO_AI", "true").lower() in ("true", "1", "yes")
+ENABLE_VIDEO_AI = os.getenv("ENABLE_VIDEO_AI", "false").lower() in ("true", "1", "yes")  # YOLO only
+MAX_UPLOAD_MB = int(os.getenv("VIDEO_MAX_UPLOAD_MB", "80"))
 UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "aegis_video_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -87,6 +88,9 @@ class VideoAIStatus(BaseModel):
     frame_interval: int
     confidence_threshold: float
     alert_threshold: float
+    demo_mode: bool = False
+    detector: str = "unavailable"
+    capabilities: list[str] = []
 
 
 # ── Background task: analyze + store + broadcast ─────────────────
@@ -161,9 +165,6 @@ async def analyze_video_endpoint(
     - **async_mode=false** (default): Processes synchronously and returns results.
     - **async_mode=true**: Queues processing in background, returns immediately.
     """
-    if not ENABLE_VIDEO_AI:
-        raise HTTPException(status_code=503, detail="Video AI is disabled (ENABLE_VIDEO_AI=false)")
-
     # Validate file type
     allowed = (".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v")
     ext = os.path.splitext(file.filename or "")[1].lower()
@@ -179,6 +180,9 @@ async def analyze_video_endpoint(
             shutil.copyfileobj(file.file, f)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save upload: {e}")
+    if os.path.getsize(video_path) > MAX_UPLOAD_MB * 1024 * 1024:
+        os.remove(video_path)
+        raise HTTPException(status_code=413, detail=f"Video too large (max {MAX_UPLOAD_MB} MB)")
 
     if async_mode:
         # Queue for background processing
@@ -235,9 +239,9 @@ async def analyze_video_endpoint(
         })
 
     except Exception as e:
-        # Fallback to demo mode if real processing fails
+        # Only if demo mode was explicitly enabled; the report is flagged demo_mode=True
         if DEMO_MODE:
-            logger.info(f"Real analysis failed ({e}), falling back to demo mode")
+            logger.info(f"Real analysis failed ({e}), falling back to LABELLED demo report")
             demo = await generate_demo_report(video_source=video_source)
             return VideoAnalysisResponse(**{
                 k: v for k, v in demo.items()
@@ -256,10 +260,6 @@ async def analyze_video_endpoint(
 @router.get("/video/events", summary="List recent video events")
 async def list_video_events(limit: int = 50):
     """Retrieve recent video analysis events from Supabase."""
-    if time.time() - START_TIME < 5:
-        return JSONResponse(content={"status": "warming_up", "message": "AI engine initializing"})
-    if not ENABLE_VIDEO_AI:
-        return {"events": [], "message": "Video AI disabled"}
 
     try:
         from db import supabase
@@ -268,7 +268,7 @@ async def list_video_events(limit: int = 50):
 
         res = supabase.table("video_events") \
             .select("*") \
-            .order("created_at", desc=True) \
+            .order("timestamp", desc=True) \
             .limit(limit) \
             .execute()
 

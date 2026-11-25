@@ -13,6 +13,8 @@ const pageTitles: Record<string, string> = {
   "/dashboard": "Command Dashboard",
   "/dispatch": "Dispatch Control",
   "/tracking": "Fleet Tracking",
+  "/hospitals": "Hospital Monitoring",
+  "/risk": "Risk Intelligence",
   "/analytics": "Strategic Analytics",
   "/analyzer": "Call Analyzer",
   "/voice": "Voice Command",

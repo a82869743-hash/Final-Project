@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { API_BASE } from "@/lib/api";
 import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
@@ -14,13 +15,16 @@ import {
   Video,
   Settings,
   Loader2,
-  ShieldAlert,
+  Building2,
+  BrainCircuit,
 } from "lucide-react";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Dispatch", href: "/dispatch", icon: Truck },
   { label: "Tracking", href: "/tracking", icon: MapPin },
+  { label: "Hospitals", href: "/hospitals", icon: Building2 },
+  { label: "Risk AI", href: "/risk", icon: BrainCircuit },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },
   { label: "Analyzer", href: "/analyzer", icon: Mic },
   { label: "Voice Command", href: "/voice", icon: Mic2 },
@@ -59,11 +63,8 @@ export default function Sidebar() {
         try {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 35000);
-          const fallbackApi = process.env.NODE_ENV === "production" 
-            ? "https://final-project-qly6.onrender.com/api" 
-            : "http://127.0.0.1:8000/api";
           const res = await fetch(
-            (process.env.NEXT_PUBLIC_API_URL || fallbackApi) + "/health",
+            API_BASE + "/health",
             { cache: "no-store", signal: controller.signal }
           );
           clearTimeout(timeoutId);

@@ -1,223 +1,142 @@
 """
-GET  /api/risk-zones   — Pre-computed accident risk zones for map visualization
-POST /api/predict-risk — Predict risk level for a specific coordinate
+GET  /api/risk-zones          — real city risk zones (MoRTH 2022) for the map
+POST /api/predict-risk        — risk for a coordinate + conditions (real-data engine)
+GET  /api/risk-profile/{city} — real hourly accident profile for a city
+GET  /api/risk-model          — model card (datasets, metrics)
 """
 
-import os
 import json
-import numpy as np
-import pandas as pd
-from fastapi import APIRouter
-from pydantic import BaseModel
+import os
 from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from services import real_risk
 
 router = APIRouter()
 
-# ── Paths ──
-ML_DIR = os.path.join(os.path.dirname(__file__), "..", "ml")
-MODEL_PATH = os.path.join(ML_DIR, "accident_risk_model.pkl")
-METADATA_PATH = os.path.join(ML_DIR, "accident_risk_metadata.json")
-GRID_CACHE_PATH = os.path.join(ML_DIR, "grid_accident_counts.json")
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-ACCIDENTS_CSV = os.path.join(PROJECT_ROOT, "india_road_accidents_large.csv")
-
-# ── Load model at startup ──
-_risk_model = None
-_grid_counts = {}
-_metadata = {}
-
-try:
-    import joblib
-    if os.path.exists(MODEL_PATH):
-        _risk_model = joblib.load(MODEL_PATH)
-        print(f"[OK] Accident risk model loaded from {MODEL_PATH}")
-except Exception as e:
-    print(f"[WARNING] Accident risk model not found: {e}")
-
-try:
-    if os.path.exists(GRID_CACHE_PATH):
-        with open(GRID_CACHE_PATH, "r") as f:
-            _grid_counts = json.load(f)
-        print(f"[OK] Grid counts loaded: {len(_grid_counts)} cells")
-except Exception as e:
-    print(f"[WARNING] Grid counts not loaded: {e}")
-
-try:
-    if os.path.exists(METADATA_PATH):
-        with open(METADATA_PATH, "r") as f:
-            _metadata = json.load(f)
-except Exception:
-    pass
-
-# ── Class labels ──
-RISK_LABELS = {0: "Low", 1: "Medium", 2: "High"}
+ZONES_PATH = os.path.join(os.path.dirname(__file__), "..", "ml", "risk_zones.json")
 RISK_COLORS = {"Low": "#10b981", "Medium": "#f59e0b", "High": "#ef4444"}
 
 
-# ── Request / Response Models ──
 class AccidentRiskRequest(BaseModel):
     latitude: float
     longitude: float
-    traffic_density: float = 2.0   # 1=Low, 2=Medium, 3=High
-    time: Optional[str] = None     # ISO time or HH:MM
+    traffic_density: float = 2.0      # kept for compatibility; 3 => assume junction
+    time: Optional[str] = None        # ISO time or HH:MM
+    weather: int = 0                  # 0 Clear, 1 Rain, 2 Fog, 3 Storm/hail
+    speed_kmh: Optional[float] = None
+    highway: Optional[bool] = None
+    vehicles: int = 2
+    casualties: int = 1
+    pedestrian: bool = False
 
 
-def _get_time_of_day(time_str: Optional[str]) -> int:
-    """Convert time string to time_of_day category."""
+def _hour(time_str: Optional[str]) -> Optional[int]:
     if not time_str:
+        return None
+    try:
         from datetime import datetime
-        hour = datetime.utcnow().hour
-    else:
+        return datetime.fromisoformat(time_str.replace("Z", "+00:00")).hour
+    except Exception:
         try:
-            from datetime import datetime
-            dt = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
-            hour = dt.hour
+            return int(time_str.split(":")[0])
         except Exception:
-            try:
-                hour = int(time_str.split(":")[0])
-            except Exception:
-                hour = 12
-    if 6 <= hour < 12:
-        return 0
-    elif 12 <= hour < 18:
-        return 1
-    elif 18 <= hour < 22:
-        return 2
-    return 3
-
-
-def _get_accident_history(lat: float, lng: float) -> int:
-    """Look up accident frequency from grid cache."""
-    grid_size = 0.01
-    grid_lat = round(round(lat / grid_size) * grid_size, 2)
-    grid_lng = round(round(lng / grid_size) * grid_size, 2)
-    key = f"{grid_lat:.2f},{grid_lng:.2f}"
-    return _grid_counts.get(key, 0)
+            return None
 
 
 @router.post("/predict-risk")
-async def predict_risk(request: AccidentRiskRequest):
-    """
-    Predict accident risk level for a specific coordinate.
-    Uses the XGBoost model trained on real accident data.
-    """
-    time_of_day = _get_time_of_day(request.time)
-    accident_history = _get_accident_history(request.latitude, request.longitude)
-    weather = 0  # default: clear
-
-    features = np.array([[
-        request.latitude, request.longitude, request.traffic_density,
-        accident_history, time_of_day, weather
-    ]])
-
-    if _risk_model is not None:
-        if hasattr(_risk_model, "predict_proba"):
-            proba = _risk_model.predict_proba(features)[0]
-            predicted_class = int(np.argmax(proba))
-            confidence = float(max(proba))
-            risk_score = float((proba[0] * 0 + proba[1] * 0.5 + proba[2] * 1.0))
-        else:
-            predicted_class = int(_risk_model.predict(features)[0])
-            confidence = 0.85
-            risk_score = predicted_class / 2.0
-    else:
-        # Mock prediction based on heuristics
-        score = (accident_history * 0.3 + request.traffic_density * 0.2 +
-                 (1 if time_of_day in [2, 3] else 0) * 0.15)
-        score = min(max(score / 3.0, 0), 1)
-        predicted_class = 2 if score >= 0.6 else (1 if score >= 0.3 else 0)
-        confidence = 0.7
-        risk_score = score
-
-    risk_level = RISK_LABELS.get(predicted_class, "Medium")
-
-    return {
-        "risk_level": risk_level,
-        "risk_score": round(risk_score, 3),
-        "confidence": round(confidence, 3),
-        "color": RISK_COLORS.get(risk_level, "#f59e0b"),
-        "features_used": {
-            "latitude": request.latitude,
-            "longitude": request.longitude,
-            "traffic_density": request.traffic_density,
-            "accident_history": accident_history,
-            "time_of_day": time_of_day,
-            "weather": weather,
-        }
-    }
+async def predict_risk(req: AccidentRiskRequest):
+    r = real_risk.assess(req.latitude, req.longitude, hour=_hour(req.time), weather=req.weather,
+                         speed_kmh=req.speed_kmh, highway=req.highway, vehicles=req.vehicles,
+                         casualties=req.casualties, junction=req.traffic_density >= 3,
+                         pedestrian=req.pedestrian)
+    return {**r, "color": RISK_COLORS[r["risk_level"]],
+            "confidence": 0.9 if r["in_coverage"] else 0.6,
+            "features_used": r["conditions"]}
 
 
-# ── Risk Zones cache ──
-_risk_zones_cache = None
+_zones_cache = None
+
 
 @router.get("/risk-zones")
 async def get_risk_zones():
-    """
-    Return pre-computed accident risk zones for map visualization.
-    Groups accidents into geographic grid cells with risk levels.
-    """
-    global _risk_zones_cache
-    if _risk_zones_cache is not None:
-        return _risk_zones_cache
+    global _zones_cache
+    if _zones_cache is None:
+        with open(ZONES_PATH) as f:
+            zones = json.load(f)
+        card = real_risk.model_card()
+        _zones_cache = {"zones": zones, "total": len(zones),
+                        "source": "MoRTH Road Accidents in India 2022 (million-plus cities)",
+                        "model": {"version": card["model_version"],
+                                  "severity_auc": card["severity_model"]["roc_auc"]}}
+    return _zones_cache
 
-    zones = []
 
-    if os.path.exists(ACCIDENTS_CSV):
-        try:
-            df = pd.read_csv(ACCIDENTS_CSV)
-            df.dropna(subset=["latitude", "longitude"], inplace=True)
+@router.get("/risk-profile/{city}")
+async def risk_profile(city: str):
+    p = real_risk.hourly_profile(city)
+    if not p:
+        raise HTTPException(404, "City not in MoRTH million-plus city dataset")
+    return p
 
-            grid_size = 0.05  # ~5.5km grid cells for visible map zones
-            df["grid_lat"] = (df["latitude"] / grid_size).round(0) * grid_size
-            df["grid_lng"] = (df["longitude"] / grid_size).round(0) * grid_size
 
-            grouped = df.groupby(["grid_lat", "grid_lng"]).agg(
-                accident_count=("latitude", "size"),
-                avg_severity=("severity", lambda x: (
-                    x.map({"Low": 0, "Medium": 1, "High": 2}).mean()
-                ))
-            ).reset_index()
+@router.get("/risk-model")
+async def risk_model():
+    return real_risk.model_card()
 
-            # Classify risk
-            q75 = grouped["accident_count"].quantile(0.75)
-            q50 = grouped["accident_count"].quantile(0.50)
 
-            for _, row in grouped.iterrows():
-                count = row["accident_count"]
-                if count >= q75:
-                    risk = "High"
-                elif count >= q50:
-                    risk = "Medium"
-                else:
-                    risk = "Low"
+_MASTER_PATH = os.path.join(os.path.dirname(__file__), "..", "ml", "india_road_accident_master.csv")
+_stats_cache = None
 
-                zones.append({
-                    "lat": round(float(row["grid_lat"]), 4),
-                    "lng": round(float(row["grid_lng"]), 4),
-                    "risk_level": risk,
-                    "color": RISK_COLORS[risk],
-                    "accident_count": int(count),
-                    "radius": 2500 if risk == "High" else 1800 if risk == "Medium" else 1200,
-                })
 
-            # Limit to top zones for performance
-            zones.sort(key=lambda z: z["accident_count"], reverse=True)
-            zones = zones[:200]
+@router.get("/india-stats")
+async def india_stats():
+    """Real MoRTH / NCRB city statistics from the master dataset (for Analytics)."""
+    global _stats_cache
+    if _stats_cache is None:
+        import math
+        import pandas as pd
+        df = pd.read_csv(_MASTER_PATH)
+        months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        slots = ["00-03", "03-06", "06-09", "09-12", "12-15", "15-18", "18-21", "21-24"]
+        clean = lambda v: None if (isinstance(v, float) and math.isnan(v)) else v  # noqa: E731
+        cities = [{k: clean(v) for k, v in r.items()} for r in df.to_dict("records")]
+        tot = lambda c: float(df[c].sum(skipna=True))  # noqa: E731
+        cause_cols = [c for c in df.columns if c.startswith("share_")]
+        card = real_risk.model_card()
+        _stats_cache = {
+            "cities": cities,
+            "totals": {
+                "accidents_2021": tot("accidents_2021"), "accidents_2022": tot("accidents_2022"),
+                "deaths_2021": tot("deaths_2021"), "deaths_2022": tot("deaths_2022"),
+                "injured_2022": tot("injured_2022"), "cities": int(len(df)),
+            },
+            "month_profile_2020": [{"month": m.title(), "accidents": tot(f"acc_2020_{m}")} for m in months],
+            "slot_profile_2020": [{"slot": s, "accidents": tot(f"acc_2020_slot_{s}")} for s in slots],
+            "national_time_2018": [{"slot": s, "share": card["india_national_time_profile_2018"][s]} for s in slots],
+            "weather_2018": [{"weather": k.title(), **v} for k, v in card["india_weather_factors_2018"].items()],
+            "cause_share_mean_2020": {c.replace("share_", "").replace("_2020", ""): round(float(df[c].mean()), 4)
+                                      for c in cause_cols},
+            "sources": ["MoRTH Road Accidents in India 2022 (Table: million-plus cities)",
+                        "MoRTH 2020 city-wise time-of-day and month tables",
+                        "MoRTH 2018 state-wise weather and national time-of-day tables",
+                        "NCRB Accidental Deaths & Suicides in India (ADSI)"],
+        }
+    return _stats_cache
 
-        except Exception as e:
-            print(f"Risk zones error: {e}")
 
-    if not zones:
-        # Fallback mock zones (Mumbai area)
-        zones = [
-            {"lat": 19.076, "lng": 72.877, "risk_level": "High", "color": "#ef4444", "accident_count": 45, "radius": 2500},
-            {"lat": 19.033, "lng": 72.844, "risk_level": "Medium", "color": "#f59e0b", "accident_count": 22, "radius": 1800},
-            {"lat": 19.114, "lng": 72.870, "risk_level": "High", "color": "#ef4444", "accident_count": 38, "radius": 2500},
-            {"lat": 19.060, "lng": 72.830, "risk_level": "Low", "color": "#10b981", "accident_count": 8, "radius": 1200},
-            {"lat": 19.090, "lng": 72.866, "risk_level": "Medium", "color": "#f59e0b", "accident_count": 18, "radius": 1800},
-            {"lat": 19.230, "lng": 72.857, "risk_level": "Low", "color": "#10b981", "accident_count": 5, "radius": 1200},
-            {"lat": 19.172, "lng": 72.957, "risk_level": "Medium", "color": "#f59e0b", "accident_count": 15, "radius": 1800},
-        ]
-
-    _risk_zones_cache = {"zones": zones, "total": len(zones)}
-    return _risk_zones_cache
+@router.get("/risk-forecast")
+async def risk_forecast(lat: float, lng: float, hours: int = 12, weather: int = 0):
+    """Real-data risk for the next N hours at a location."""
+    from datetime import datetime
+    now = datetime.now().hour
+    out = []
+    for h in range(max(1, min(hours, 24))):
+        hr = (now + h) % 24
+        r = real_risk.assess(lat, lng, hour=hr, weather=weather)
+        out.append({"offset": h, "hour": f"{hr:02d}:00", "risk_level": r["risk_level"],
+                    "percentile": r["percentile"], "p_fatal_or_serious": r["p_fatal_or_serious"],
+                    "expected_deaths_per_hour": r["expected_deaths_per_hour"]})
+    return {"location": {"lat": lat, "lng": lng}, "forecast": out}

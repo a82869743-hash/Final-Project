@@ -33,13 +33,17 @@ class Vehicle(BaseModel):
 
 class PredictionRequest(BaseModel):
     hour: int
-    day_of_week: int
-    zone_id: int
-    temperature: float
-    humidity: float
-    traffic_index: float
-    population_density: float
-    historical_incidents: int
+    day_of_week: int = 0
+    zone_id: int = 1
+    temperature: float = 28.0
+    humidity: float = 60.0
+    traffic_index: float = 0.5
+    population_density: float = 1.0
+    historical_incidents: int = 0
+    # Real-data engine inputs (default: Delhi, clear weather)
+    latitude: float = 28.6139
+    longitude: float = 77.2090
+    weather: int = 0               # 0 clear, 1 rain, 2 fog, 3 storm/hail
 
 
 class PredictionResponse(BaseModel):
@@ -51,6 +55,10 @@ class PredictionResponse(BaseModel):
     drift_detected: bool = False
     drift_features: list[str] = []
     warning: str = ""
+    percentile: float | None = None
+    nearest_city: str | None = None
+    p_fatal_or_serious: float | None = None
+    factors: list[dict] = []
 
 
 class AnalysisResponse(BaseModel):

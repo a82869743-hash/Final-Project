@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Radio, Volume2, VolumeX, ShieldAlert } from "lucide-react";
 import { type Alert } from "@/lib/api";
 
@@ -62,17 +62,12 @@ export default function RadioScanner({ alerts }: { alerts: Alert[] }) {
     }
   }, [logs]);
 
-  // Initial population if empty
-  useEffect(() => {
-    if (logs.length === 0 && alerts.length > 0) {
-       const initialLogs = alerts.slice(0, 3).map(a => ({
-         id: `log-init-${a.id}`,
-         text: `Dispatch: ${get10Code(a.severity)} reported at ${a.location}. ${a.title}.`,
-         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-       }));
-       setLogs(initialLogs);
-    }
-  }, [alerts, logs.length]);
+  // Seed the log from the first alerts without a cascading setState-in-effect
+  const shownLogs = useMemo(() => logs.length > 0 ? logs : alerts.slice(0, 3).map(a => ({
+    id: `log-init-${a.id}`,
+    text: `Dispatch: ${get10Code(a.severity)} reported at ${a.location}. ${a.title}.`,
+    time: "--:--:--",
+  })), [logs, alerts]);
 
   return (
     <div className="glass rounded-[var(--radius-lg)] shadow-lg overflow-hidden border border-[var(--color-outline-variant)] flex flex-col h-full bg-[#0a0a0a]">
@@ -104,7 +99,7 @@ export default function RadioScanner({ alerts }: { alerts: Alert[] }) {
         ref={scrollRef}
         className="flex-1 p-4 overflow-y-auto font-mono text-[11px] leading-relaxed space-y-2 max-h-[200px]"
       >
-        {logs.map((log) => (
+        {shownLogs.map((log) => (
           <div key={log.id} className="flex gap-3 animate-fade-in text-cyan-400 opacity-90 border-b border-gray-800 pb-2">
             <span className="text-gray-500 shrink-0">[{log.time}]</span>
             <span className="break-words">
@@ -113,7 +108,7 @@ export default function RadioScanner({ alerts }: { alerts: Alert[] }) {
             </span>
           </div>
         ))}
-        {logs.length === 0 && (
+        {shownLogs.length === 0 && (
           <div className="text-gray-600 text-center italic mt-4">Waiting for dispatch signals...</div>
         )}
       </div>

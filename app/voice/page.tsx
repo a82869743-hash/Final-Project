@@ -1,105 +1,23 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import {
-  Mic,
-  MicOff,
-  Upload,
-  Loader2,
-  AlertTriangle,
-  Activity,
-  Ambulance,
-  MapPin,
-  Brain,
-  Waves,
-  FileAudio,
-  ArrowRight,
-  Hospital,
-  Siren,
-  CheckCircle2,
-} from "lucide-react";
+import Link from "next/link";
 import dynamic from "next/dynamic";
-import { api } from "@/lib/api";
+import {
+  Mic, MicOff, Upload, Loader2, AlertTriangle, Activity, Ambulance, MapPin, Brain, Waves, FileAudio,
+  ArrowRight, Hospital, Siren, CheckCircle2, Send, LocateFixed, Keyboard, BrainCircuit,
+} from "lucide-react";
+import { api, type RiskFactor } from "@/lib/api";
+import type { EmergencyMapData } from "@/components/map/VoiceResultMap";
 
-/* Dynamic Leaflet map for showing emergency locations */
-const VoiceResultMap = dynamic(
-  () => import("react-leaflet").then((mod) => {
-    const { MapContainer, TileLayer, Marker, Popup, Circle, useMap } = mod;
-    const L = require("leaflet");
-
-    // Fix default icon
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (L.Icon.Default.prototype as any)._getIconUrl;
-    L.Icon.Default.mergeOptions({
-      iconRetinaUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png",
-      iconUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png",
-      shadowUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png",
-    });
-
-    const makeIcon = (color: string, label: string) => L.divIcon({
-      className: "",
-      html: `<div style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.35);color:#fff;font-size:12px;font-weight:700">${label}</div>`,
-      iconSize: [28, 28],
-      iconAnchor: [14, 14],
-    });
-
-    /* Auto-fit map bounds to all markers */
-    function AutoFit({ points }: { points: [number, number][] }) {
-      const map = useMap();
-      const { useEffect, useRef } = require("react");
-      const fitted = useRef(false);
-      useEffect(() => {
-        if (!fitted.current && points.length > 0) {
-          const bounds = L.latLngBounds(points);
-          map.fitBounds(bounds, { padding: [50, 50], maxZoom: 10, animate: true });
-          fitted.current = true;
-        }
-      }, [points, map]);
-      return null;
-    }
-
-    function ResultMap({ data }: { data: any }) {
-      if (!data) return null;
-      const inc = data.incident_location || {};
-      const center: [number, number] = [inc.latitude || 19.076, inc.longitude || 72.877];
-      const ambs = data.all_nearby_ambulances || [];
-      const hosps = data.all_nearby_hospitals || [];
-
-      // Collect ALL points for auto-fit
-      const allPoints: [number, number][] = [center];
-      ambs.forEach((a: any) => allPoints.push([a.latitude, a.longitude]));
-      hosps.forEach((h: any) => allPoints.push([h.latitude, h.longitude]));
-
-      return (
-        <MapContainer center={center} zoom={8} scrollWheelZoom style={{ height: "100%", width: "100%", zIndex: 0 }}>
-          <TileLayer url="https://tile.openstreetmap.de/{z}/{x}/{y}.png" attribution='&copy; OpenStreetMap' maxZoom={19} />
-          <AutoFit points={allPoints} />
-          {/* Incident location */}
-          <Circle center={center} radius={2000} pathOptions={{ color: "#f59e0b", fillColor: "#f59e0b", fillOpacity: 0.15, weight: 2 }} />
-          <Marker position={center} icon={makeIcon("#f59e0b", "!")}>
-            <Popup><strong>Incident Location</strong><br />{inc.latitude?.toFixed(4)}, {inc.longitude?.toFixed(4)}</Popup>
-          </Marker>
-          {/* Ambulances */}
-          {ambs.map((a: any, i: number) => (
-            <Marker key={`a${i}`} position={[a.latitude, a.longitude]} icon={makeIcon("#ef4444", "A")}>
-              <Popup><strong>{a.vehicle_id}</strong><br />Distance: {a.distance_km} km<br />ETA: {a.estimated_arrival_min} min<br />Status: {a.status}</Popup>
-            </Marker>
-          ))}
-          {/* Hospitals */}
-          {hosps.map((h: any, i: number) => (
-            <Marker key={`h${i}`} position={[h.latitude, h.longitude]} icon={makeIcon("#3b82f6", "H")}>
-              <Popup><strong>{h.hospital_name}</strong><br />Distance: {h.distance_km} km<br />City: {h.city}<br />Beds: {h.available_beds} / {h.total_beds}<br />Emergency: {h.has_emergency}<br />ICU: {h.icu_beds}</Popup>
-            </Marker>
-          ))}
-        </MapContainer>
-      );
-    }
-    return ResultMap;
-  }),
-  { ssr: false, loading: () => <div className="w-full h-full flex justify-center items-center bg-[var(--color-surface-container-low)] rounded-[var(--radius-md)] text-[var(--color-on-surface-muted)]">Loading map...</div> }
-);
+const VoiceResultMap = dynamic(() => import("@/components/map/VoiceResultMap"), {
+  ssr: false,
+  loading: () => <div className="w-full h-full flex justify-center items-center bg-[var(--color-surface-container-low)] text-[var(--color-on-surface-muted)] text-[11px]">Loading map…</div>,
+});
 
 type ProcessingStage = "idle" | "recording" | "transcribing" | "detecting" | "routing" | "complete";
+const STAGES: ProcessingStage[] = ["recording", "transcribing", "detecting", "routing", "complete"];
+const MAX_SECONDS = 15;
 
 interface IntentResult {
   intent: string;
@@ -111,11 +29,46 @@ interface IntentResult {
   extracted_location: { name: string; latitude: number; longitude: number } | null;
 }
 
-interface ActionResult {
-  type: string;
-  message: string;
-  data: any;
+interface Ambulance { vehicle_id: string; distance_km: number; estimated_arrival_min: number; status: string }
+interface RecHospital { id: string; name: string; city: string; distance_km: number; eta_min: number; ward_available: number; er_wait_min: number; accepting_critical: boolean }
+interface EmergencyData extends EmergencyMapData {
+  nearest_ambulance?: Ambulance | null;
+  all_nearby_ambulances?: (Ambulance & { latitude: number; longitude: number })[];
+  recommended_hospitals?: (RecHospital & { lat: number; lng: number })[];
+  bed_need?: string;
+  dispatched?: { vehicle_id: string; name: string; eta_min: number; then_to: string } | null;
+  area_risk?: { level: string; percentile: number; city: string };
 }
+interface RiskData {
+  risk: { risk_level: string; percentile: number; nearest_city: string; p_fatal_or_serious: number; factors: RiskFactor[] };
+  profile?: { slots: string[]; slot_share: (number | null)[] } | null;
+}
+interface ActionResult {
+  type: "emergency" | "help" | "risk" | "traffic" | "general" | "need_location" | "error";
+  message: string;
+  location_source?: string;
+  data: EmergencyData | RiskData | null;
+}
+
+/* Minimal typing for the browser Web Speech API */
+interface SpeechRecognitionLike {
+  lang: string; continuous: boolean; interimResults: boolean;
+  onresult: ((e: { results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start(): void; stop(): void; abort(): void;
+}
+type SRCtor = new () => SpeechRecognitionLike;
+
+const EXAMPLES = [
+  "Accident near Andheri, two people are bleeding",
+  "Need an ambulance in Koramangala",
+  "Fire at Connaught Place",
+  "Is it risky near Delhi right now?",
+  "Heavy traffic at Silk Board",
+];
+
+const LEVEL_COLOR: Record<string, string> = { High: "#dc2626", Medium: "#d97706", Low: "#16a34a" };
 
 export default function VoiceCommandPage() {
   const [stage, setStage] = useState<ProcessingStage>("idle");
@@ -126,244 +79,239 @@ export default function VoiceCommandPage() {
   const [error, setError] = useState("");
   const [recordingTime, setRecordingTime] = useState(0);
   const [audioLevel, setAudioLevel] = useState(0);
-  const [isMock, setIsMock] = useState(false);
+  const [lang, setLang] = useState("en-IN");
+  const [typed, setTyped] = useState("");
+  const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
+  const [geoState, setGeoState] = useState<"off" | "asking" | "on" | "denied">("off");
+  const [speechSupported, setSpeechSupported] = useState(true);
 
-  const recognitionRef = useRef<any>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const liveTextRef = useRef<string>("");
+  const liveTextRef = useRef("");
+  const geoRef = useRef<{ lat: number; lng: number } | null>(null);
+  const busyRef = useRef(false);
 
-  // Cleanup on unmount
   useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-      if (recognitionRef.current) try { recognitionRef.current.abort(); } catch {}
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-    };
+    const w = window as unknown as { SpeechRecognition?: SRCtor; webkitSpeechRecognition?: SRCtor };
+    const supported = !!(w.SpeechRecognition || w.webkitSpeechRecognition);
+    const t = setTimeout(() => setSpeechSupported(supported), 0);
+    return () => clearTimeout(t);
   }, []);
 
-  const startRecording = useCallback(async () => {
+  const requestLocation = useCallback(() => {
+    if (!navigator.geolocation) { setGeoState("denied"); return; }
+    setGeoState("asking");
+    navigator.geolocation.getCurrentPosition(
+      (p) => { const g = { lat: p.coords.latitude, lng: p.coords.longitude }; geoRef.current = g; setGeo(g); setGeoState("on"); },
+      () => setGeoState("denied"),
+      { enableHighAccuracy: true, timeout: 8000 },
+    );
+  }, []);
+
+  /* ── tear down mic / recognizer / timers (safe to call repeatedly) ── */
+  const teardown = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (autoStopRef.current) { clearTimeout(autoStopRef.current); autoStopRef.current = null; }
+    if (animFrameRef.current) { cancelAnimationFrame(animFrameRef.current); animFrameRef.current = null; }
+    const rec = recognitionRef.current;
+    recognitionRef.current = null;
+    if (rec) { rec.onend = null; try { rec.stop(); } catch { /* already stopped */ } }
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    audioCtxRef.current?.close().catch(() => {});
+    audioCtxRef.current = null;
+    analyserRef.current = null;
+    setAudioLevel(0);
+    setIsRecording(false);
+  }, []);
+
+  useEffect(() => () => teardown(), [teardown]);
+
+  const runPipeline = useCallback(async (fetcher: () => Promise<{ transcription?: string; whisper_error?: string; intent: IntentResult; action_result: ActionResult }>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setError(""); setIntentResult(null); setActionResult(null);
     try {
-      setError("");
-      setTranscription("");
-      setIntentResult(null);
-      setActionResult(null);
-      setIsMock(false);
-      liveTextRef.current = "";
+      setStage("transcribing");
+      const result = await fetcher();
+      if (result.whisper_error && !result.transcription) throw new Error(result.whisper_error);
+      if (result.transcription) setTranscription(result.transcription);
+      setStage("detecting");
+      setIntentResult(result.intent);
+      await new Promise((r) => setTimeout(r, 250));
+      setStage("routing");
+      setActionResult(result.action_result);
+      await new Promise((r) => setTimeout(r, 250));
+      setStage("complete");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to process. Is the backend running?");
+      setStage("idle");
+    } finally {
+      busyRef.current = false;
+    }
+  }, []);
 
-      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (!SR) {
-        setError("Speech Recognition not supported. Use Chrome or Edge.");
-        return;
-      }
+  const processText = useCallback((text: string) => {
+    const g = geoRef.current;
+    setTranscription(text);
+    return runPipeline(async () => {
+      const r = await api.textIntent(text, g?.lat, g?.lng);
+      return r as unknown as { transcription: string; intent: IntentResult; action_result: ActionResult };
+    });
+  }, [runPipeline]);
 
+  const stopRecording = useCallback(() => {
+    if (!recognitionRef.current) return; // already stopped (button + auto-stop + onend can all fire)
+    teardown();
+    // give the recognizer a moment to flush its final result
+    setTimeout(() => {
+      const text = liveTextRef.current.trim();
+      if (text) processText(text);
+      else { setError("No speech detected. Speak clearly, or type the call below."); setStage("idle"); }
+    }, 350);
+  }, [teardown, processText]);
+
+  const startRecording = useCallback(async () => {
+    const w = window as unknown as { SpeechRecognition?: SRCtor; webkitSpeechRecognition?: SRCtor };
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) { setError("Live speech recognition needs Chrome or Edge — type the call below or upload audio."); return; }
+    setError(""); setTranscription(""); setIntentResult(null); setActionResult(null);
+    liveTextRef.current = "";
+    if (geoState === "off") requestLocation();
+    try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const audioCtx = new AudioContext();
-      audioCtxRef.current = audioCtx;
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
+      const ctx = new AudioContext();
+      audioCtxRef.current = ctx;
+      const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
-      source.connect(analyser);
+      ctx.createMediaStreamSource(stream).connect(analyser);
       analyserRef.current = analyser;
-
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      const updateLevel = () => {
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
         if (!analyserRef.current) return;
-        analyserRef.current.getByteFrequencyData(dataArray);
-        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        setAudioLevel(avg / 128);
-        animFrameRef.current = requestAnimationFrame(updateLevel);
+        analyserRef.current.getByteFrequencyData(buf);
+        setAudioLevel(buf.reduce((a, b) => a + b, 0) / buf.length / 128);
+        animFrameRef.current = requestAnimationFrame(tick);
       };
-      updateLevel();
+      tick();
 
-      const recognition = new SR();
-      recognition.lang = "en-US";
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognitionRef.current = recognition;
-
-      recognition.onresult = (event: any) => {
-        let finalT = "";
-        let interimT = "";
+      const rec = new SR();
+      rec.lang = lang;
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onresult = (event) => {
+        let finalT = "", interimT = "";
         for (let i = 0; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            finalT += event.results[i][0].transcript + " ";
-          } else {
-            interimT += event.results[i][0].transcript;
-          }
+          if (event.results[i].isFinal) finalT += event.results[i][0].transcript + " ";
+          else interimT += event.results[i][0].transcript;
         }
-        const full = (finalT + interimT).trim();
-        liveTextRef.current = full;
-        setTranscription(full);
+        liveTextRef.current = (finalT + interimT).trim();
+        setTranscription(liveTextRef.current);
       };
-
-      recognition.onerror = (event: any) => {
-        if (event.error !== "aborted" && event.error !== "no-speech") {
-          console.warn("Speech error:", event.error);
-        }
+      rec.onerror = (e) => {
+        if (e.error === "not-allowed") setError("Microphone permission denied.");
+        else if (e.error === "network") setError("Speech service unreachable (needs internet). Type the call below instead.");
       };
+      // Chrome ends recognition on long silence: finish the pipeline instead of hanging
+      rec.onend = () => { if (recognitionRef.current === rec) stopRecording(); };
+      recognitionRef.current = rec;
+      rec.start();
 
-      recognition.start();
       setIsRecording(true);
       setStage("recording");
       setRecordingTime(0);
-
-      timerRef.current = setInterval(() => {
-        setRecordingTime((t) => t + 1);
-      }, 1000);
-
-      setTimeout(() => {
-        if (recognitionRef.current) stopRecording();
-      }, 10000);
-    } catch (err: any) {
-      setError("Microphone access denied. Please allow microphone permissions.");
-    }
-  }, []);
-
-  const stopRecording = useCallback(() => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    setAudioLevel(0);
-    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch {} recognitionRef.current = null; }
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null; }
-    analyserRef.current = null;
-    setIsRecording(false);
-
-    setTimeout(() => {
-      const text = liveTextRef.current.trim();
-      if (text) {
-        processText(text);
-      } else {
-        setError("No speech detected. Try speaking louder or longer.");
-        setStage("idle");
-      }
-    }, 400);
-  }, []);
-
-  const processText = async (text: string) => {
-    try {
-      setStage("transcribing");
-      await new Promise((r) => setTimeout(r, 300));
-      setStage("detecting");
-
-      const result = await api.textIntent(text);
-
-      setIntentResult(result.intent || null);
-      setStage("routing");
-      await new Promise((r) => setTimeout(r, 400));
-      setActionResult(result.action_result || null);
-      setStage("complete");
-    } catch (err: any) {
-      setError(err.message || "Failed to process. Is the backend running?");
+      timerRef.current = setInterval(() => setRecordingTime((t) => t + 1), 1000);
+      autoStopRef.current = setTimeout(() => stopRecording(), MAX_SECONDS * 1000);
+    } catch {
+      teardown();
+      setError("Microphone access denied. Allow microphone permissions, or type the call below.");
       setStage("idle");
     }
-  };
+  }, [lang, geoState, requestLocation, stopRecording, teardown]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-uploading the same file
     if (!file) return;
-    setError(""); setTranscription(""); setIntentResult(null); setActionResult(null);
-    try {
-      setStage("transcribing");
-      const result = await api.voiceIntent(file);
-      if (result.whisper_error && !result.transcription) {
-        setError(result.whisper_error);
-        setStage("idle");
-        return;
-      }
-      setTranscription(result.transcription || "");
-      setStage("detecting");
-      await new Promise((r) => setTimeout(r, 400));
-      setIntentResult(result.intent || null);
-      setStage("routing");
-      await new Promise((r) => setTimeout(r, 400));
-      setActionResult(result.action_result || null);
-      setStage("complete");
-    } catch (err: any) {
-      setError(err.message || "Failed to process audio file.");
-      setStage("idle");
-    }
+    setTranscription("");
+    const g = geoRef.current;
+    await runPipeline(async () => {
+      const fd = new FormData();
+      fd.append("file", file);
+      if (g) { fd.append("latitude", String(g.lat)); fd.append("longitude", String(g.lng)); }
+      const { API_BASE } = await import("@/lib/api");
+      const res = await fetch(`${API_BASE}/voice-intent`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      return res.json();
+    });
+  };
+
+  const submitTyped = (text = typed) => {
+    const t = text.trim();
+    if (!t || busyRef.current) return;
+    setTyped("");
+    processText(t);
   };
 
   const resetState = () => {
-    setStage("idle");
-    setTranscription("");
-    setIntentResult(null);
-    setActionResult(null);
-    setError("");
-    setRecordingTime(0);
-    setIsMock(false);
+    teardown();
+    setStage("idle"); setTranscription(""); setIntentResult(null); setActionResult(null);
+    setError(""); setRecordingTime(0);
   };
 
-  const priorityColor = (priority: string) => {
-    switch (priority) {
-      case "critical": return "var(--color-error)";
-      case "high": return "var(--color-warning)";
-      default: return "var(--color-success)";
-    }
-  };
+  const priorityColor = (p: string) => p === "critical" ? "var(--color-error)" : p === "high" ? "var(--color-warning)" : p === "normal" ? "var(--color-info)" : "var(--color-on-surface-muted)";
+  const busy = stage === "transcribing" || stage === "detecting" || stage === "routing";
+  const isEmergency = actionResult && (actionResult.type === "emergency" || actionResult.type === "help") && actionResult.data;
+  const emergency = isEmergency ? (actionResult!.data as EmergencyData) : null;
+  const riskData = actionResult && (actionResult.type === "risk" || actionResult.type === "traffic") ? (actionResult.data as RiskData) : null;
 
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-[var(--font-display)] text-[22px] font-bold tracking-tight text-[var(--color-on-surface)]">
-            Voice Command Center
-          </h1>
-          <p className="text-[13px] text-[var(--color-on-surface-muted)] mt-1">
-            Speak or upload audio — the system will detect intent and trigger actions automatically
-          </p>
+          <h1 className="font-[var(--font-display)] text-[22px] font-bold tracking-tight text-[var(--color-on-surface)]">Voice Command Center</h1>
+          <p className="text-[13px] text-[var(--color-on-surface-muted)] mt-1">Speak, type or upload an emergency call — intent, location and response are handled automatically</p>
         </div>
-        {stage !== "idle" && (
-          <button
-            onClick={resetState}
-            className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-container-high)] text-[12px] font-medium text-[var(--color-on-surface-muted)] hover:text-[var(--color-on-surface)] transition-colors"
-          >
-            Reset
+        <div className="flex items-center gap-2">
+          <button onClick={requestLocation}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-[var(--radius-md)] text-[11px] font-semibold ${geoState === "on" ? "bg-[var(--color-success)]/10 text-[var(--color-success)]" : "bg-[var(--color-surface-container-high)] text-[var(--color-on-surface-muted)]"}`}>
+            {geoState === "asking" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LocateFixed className="h-3.5 w-3.5" />}
+            {geoState === "on" && geo ? `GPS ${geo.lat.toFixed(3)}, ${geo.lng.toFixed(3)}` : geoState === "denied" ? "Location blocked" : "Use my location"}
           </button>
-        )}
+          {stage !== "idle" && (
+            <button onClick={resetState} className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-container-high)] text-[12px] font-medium text-[var(--color-on-surface-muted)] hover:text-[var(--color-on-surface)]">Reset</button>
+          )}
+        </div>
       </div>
 
       {/* Pipeline Progress */}
-      <div className="card-lifted p-4">
-        <div className="flex items-center gap-3">
-          {["recording", "transcribing", "detecting", "routing", "complete"].map((s, i) => {
-            const stageNames = ["Voice Input", "Transcription", "Intent Detection", "Action Routing", "Complete"];
-            const icons = [Mic, Waves, Brain, ArrowRight, CheckCircle2];
-            const Icon = icons[i];
+      <div className="card-lifted p-4 overflow-x-auto">
+        <div className="flex items-center gap-3 min-w-[560px]">
+          {STAGES.map((s, i) => {
+            const names = ["Voice Input", "Transcription", "Intent Detection", "Action Routing", "Complete"];
+            const Icon = [Mic, Waves, Brain, ArrowRight, CheckCircle2][i];
             const isActive = stage === s;
-            const isPast = ["recording", "transcribing", "detecting", "routing", "complete"].indexOf(stage) > i;
+            const isPast = STAGES.indexOf(stage) > i;
             return (
               <div key={s} className="flex items-center gap-3 flex-1">
-                <div className={`flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] transition-all duration-300 flex-1 ${
-                  isActive ? "bg-[var(--color-primary)] text-white shadow-lg" :
-                  isPast ? "bg-[rgba(0,103,127,0.1)] text-[var(--color-primary)]" :
-                  "bg-[var(--color-surface-container-high)] text-[var(--color-on-surface-muted)]"
-                }`}>
-                  {isActive && stage !== "complete" ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Icon className="h-3.5 w-3.5" />
-                  )}
-                  <span className="text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap">
-                    {stageNames[i]}
-                  </span>
+                <div className={`flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] transition-all duration-300 flex-1 ${isActive ? "bg-[var(--color-primary)] text-white shadow-lg" : isPast ? "bg-[rgba(0,103,127,0.1)] text-[var(--color-primary)]" : "bg-[var(--color-surface-container-high)] text-[var(--color-on-surface-muted)]"}`}>
+                  {isActive && s !== "complete" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
+                  <span className="text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap">{names[i]}</span>
                 </div>
-                {i < 4 && <div className={`h-[2px] w-4 rounded-full transition-colors duration-300 shrink-0 ${isPast ? "bg-[var(--color-primary)]" : "bg-[var(--color-surface-container-high)]"}`} />}
+                {i < 4 && <div className={`h-[2px] w-4 rounded-full shrink-0 ${isPast ? "bg-[var(--color-primary)]" : "bg-[var(--color-surface-container-high)]"}`} />}
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Error Banner */}
       {error && (
         <div className="flex items-center gap-3 rounded-[var(--radius-md)] bg-[rgba(239,68,68,0.06)] px-4 py-3 animate-fade-in">
           <AlertTriangle className="h-4 w-4 text-[var(--color-error)] shrink-0" />
@@ -371,339 +319,227 @@ export default function VoiceCommandPage() {
         </div>
       )}
 
-      {/* Main Content Grid */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Left: Voice Input */}
+        {/* Left: inputs */}
         <div className="space-y-4">
-          {/* Microphone Card */}
           <div className="card-lifted p-6 relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-[rgba(0,103,127,0.03)] to-transparent" />
             <div className="relative z-10">
               <h3 className="font-[var(--font-display)] text-[13px] font-semibold tracking-tight text-[var(--color-on-surface)] mb-4 flex items-center gap-2">
-                <Mic className="h-4 w-4 text-[var(--color-primary)]" />
-                Live Microphone
+                <Mic className="h-4 w-4 text-[var(--color-primary)]" /> Live Microphone
+                <select value={lang} onChange={(e) => setLang(e.target.value)} disabled={isRecording}
+                  className="ml-auto text-[10px] font-semibold bg-[var(--color-surface-container-high)] rounded px-2 py-1 outline-none">
+                  <option value="en-IN">English (India)</option>
+                  <option value="hi-IN">हिन्दी (Hindi)</option>
+                  <option value="en-US">English (US)</option>
+                </select>
               </h3>
-
               <div className="flex flex-col items-center py-6">
-                {/* Audio Visualizer Ring */}
                 <div className="relative mb-6">
-                  <div
-                    className="absolute inset-0 rounded-full transition-all duration-150"
-                    style={{
-                      transform: `scale(${1 + audioLevel * 0.5})`,
-                      background: isRecording
-                        ? `radial-gradient(circle, rgba(239,68,68,${0.1 + audioLevel * 0.2}) 0%, transparent 70%)`
-                        : "transparent",
-                    }}
-                  />
-                  <button
-                    onClick={isRecording ? stopRecording : startRecording}
-                    disabled={stage === "transcribing" || stage === "detecting" || stage === "routing"}
-                    className={`relative h-20 w-20 rounded-full flex items-center justify-center transition-all duration-300 ${
-                      isRecording
-                        ? "bg-[var(--color-error)] text-white shadow-[0_0_20px_rgba(239,68,68,0.4)] animate-pulse"
-                        : "bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-primary-dim)] text-white shadow-lg hover:shadow-xl hover:scale-105"
-                    } disabled:opacity-40 disabled:cursor-not-allowed`}
-                  >
+                  <div className="absolute inset-0 rounded-full transition-all duration-150" style={{
+                    transform: `scale(${1 + audioLevel * 0.5})`,
+                    background: isRecording ? `radial-gradient(circle, rgba(239,68,68,${0.1 + audioLevel * 0.2}) 0%, transparent 70%)` : "transparent",
+                  }} />
+                  <button onClick={isRecording ? stopRecording : startRecording} disabled={busy || !speechSupported}
+                    aria-label={isRecording ? "Stop recording" : "Start recording"}
+                    className={`relative h-20 w-20 rounded-full flex items-center justify-center transition-all duration-300 ${isRecording ? "bg-[var(--color-error)] text-white shadow-[0_0_20px_rgba(239,68,68,0.4)] animate-pulse" : "bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-primary-dim)] text-white shadow-lg hover:shadow-xl hover:scale-105"} disabled:opacity-40 disabled:cursor-not-allowed`}>
                     {isRecording ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
                   </button>
                 </div>
-
                 <p className="text-[12px] text-[var(--color-on-surface-muted)] text-center">
-                  {isRecording
-                    ? `Recording... ${recordingTime}s (max 10s)`
-                    : stage === "idle"
-                    ? "Click to start recording (5-10 sec)"
-                    : "Processing..."}
+                  {!speechSupported ? "Live recognition needs Chrome or Edge — type or upload below"
+                    : isRecording ? `Listening… ${recordingTime}s — tap to finish (auto-stops at ${MAX_SECONDS}s)`
+                      : busy ? "Processing…" : "Tap and describe the emergency"}
                 </p>
-
-                {/* Recording time bar */}
                 {isRecording && (
                   <div className="w-full mt-4 h-1.5 rounded-full bg-[var(--color-surface-container-high)] overflow-hidden">
-                    <div
-                      className="h-full bg-[var(--color-error)] rounded-full transition-all duration-1000"
-                      style={{ width: `${(recordingTime / 10) * 100}%` }}
-                    />
+                    <div className="h-full bg-[var(--color-error)] rounded-full transition-all duration-1000" style={{ width: `${(recordingTime / MAX_SECONDS) * 100}%` }} />
                   </div>
                 )}
               </div>
             </div>
           </div>
 
-          {/* File Upload Card */}
+          {/* Type a call */}
           <div className="card-lifted p-5">
-            <h3 className="font-[var(--font-display)] text-[13px] font-semibold tracking-tight text-[var(--color-on-surface)] mb-3 flex items-center gap-2">
-              <FileAudio className="h-4 w-4 text-[var(--color-primary)]" />
-              Upload Audio File
+            <h3 className="font-[var(--font-display)] text-[13px] font-semibold text-[var(--color-on-surface)] mb-3 flex items-center gap-2">
+              <Keyboard className="h-4 w-4 text-[var(--color-primary)]" /> Type the Call
             </h3>
-            <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-[var(--color-surface-container-high)] rounded-[var(--radius-md)] cursor-pointer hover:border-[var(--color-primary)] hover:bg-[rgba(0,103,127,0.02)] transition-all">
+            <form onSubmit={(e) => { e.preventDefault(); submitTyped(); }} className="flex gap-2">
+              <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="e.g. Accident near Andheri, two injured"
+                className="flex-1 text-[12px] bg-[var(--color-surface-container-low)] rounded-[var(--radius-md)] px-3 py-2 outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
+              <button type="submit" disabled={busy || !typed.trim()} className="btn-primary px-3 rounded-[var(--radius-md)] disabled:opacity-40" aria-label="Send">
+                <Send className="h-4 w-4" />
+              </button>
+            </form>
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {EXAMPLES.map((ex) => (
+                <button key={ex} onClick={() => submitTyped(ex)} disabled={busy}
+                  className="text-[10px] px-2 py-1 rounded-full bg-[var(--color-surface-container-high)] text-[var(--color-on-surface-muted)] hover:text-[var(--color-primary)] disabled:opacity-40">
+                  {ex}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="card-lifted p-5">
+            <h3 className="font-[var(--font-display)] text-[13px] font-semibold text-[var(--color-on-surface)] mb-3 flex items-center gap-2">
+              <FileAudio className="h-4 w-4 text-[var(--color-primary)]" /> Upload Call Recording
+            </h3>
+            <label className={`flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-[var(--color-surface-container-high)] rounded-[var(--radius-md)] transition-all ${busy ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:border-[var(--color-primary)] hover:bg-[rgba(0,103,127,0.02)]"}`}>
               <Upload className="h-5 w-5 text-[var(--color-on-surface-muted)] mb-1" />
-              <span className="text-[11px] text-[var(--color-on-surface-muted)]">
-                Drop audio file or click to browse
-              </span>
-              <span className="text-[10px] text-[var(--color-on-surface-muted)] opacity-60 mt-0.5">
-                .wav .mp3 .webm .ogg .m4a
-              </span>
-              <input
-                type="file"
-                accept="audio/*"
-                className="hidden"
-                onChange={handleFileUpload}
-                disabled={stage !== "idle" && stage !== "complete"}
-              />
+              <span className="text-[11px] text-[var(--color-on-surface-muted)]">Drop audio or click to browse</span>
+              <span className="text-[10px] text-[var(--color-on-surface-muted)] opacity-60 mt-0.5">.wav .mp3 .webm .ogg .m4a · transcribed with Whisper (needs OpenAI key)</span>
+              <input type="file" accept="audio/*" className="hidden" onChange={handleFileUpload} disabled={busy || isRecording} />
             </label>
           </div>
 
-          {/* Transcription Result */}
           {transcription && (
             <div className="card-lifted p-5 animate-fade-in">
-              <h3 className="font-[var(--font-display)] text-[13px] font-semibold tracking-tight text-[var(--color-on-surface)] mb-3 flex items-center gap-2">
-                <Waves className="h-4 w-4 text-[var(--color-primary)]" />
-                Transcription
-                <span className={`ml-auto px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
-                  isMock
-                    ? "bg-[rgba(245,158,11,0.1)] text-[var(--color-warning)]"
-                    : "bg-[rgba(16,185,129,0.1)] text-[var(--color-success)]"
-                }`}>
-                  {isMock ? "Demo" : "Live"}
-                </span>
+              <h3 className="font-[var(--font-display)] text-[13px] font-semibold text-[var(--color-on-surface)] mb-3 flex items-center gap-2">
+                <Waves className="h-4 w-4 text-[var(--color-primary)]" /> Transcription
+                <span className="ml-auto px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-[rgba(16,185,129,0.1)] text-[var(--color-success)]">{isRecording ? "Listening" : "Final"}</span>
               </h3>
-              <p className="text-[13px] text-[var(--color-on-surface)] leading-relaxed bg-[var(--color-surface-container-low)] rounded-[var(--radius-sm)] p-3 italic">
-                &ldquo;{transcription}&rdquo;
-              </p>
+              <p className="text-[13px] text-[var(--color-on-surface)] leading-relaxed bg-[var(--color-surface-container-low)] rounded-[var(--radius-sm)] p-3 italic">&ldquo;{transcription}&rdquo;</p>
             </div>
           )}
         </div>
 
-        {/* Right: Results */}
+        {/* Right: results */}
         <div className="space-y-4">
-          {/* Intent Detection Card */}
           {intentResult && (
-            <div className="card-lifted p-5 animate-fade-in relative overflow-hidden">
-              <div
-                className="absolute inset-0 opacity-[0.04]"
-                style={{ backgroundColor: priorityColor(intentResult.priority) }}
-              />
-              <div className="relative z-10">
-                <h3 className="font-[var(--font-display)] text-[13px] font-semibold tracking-tight text-[var(--color-on-surface)] mb-4 flex items-center gap-2">
-                  <Brain className="h-4 w-4 text-[var(--color-primary)]" />
-                  Intent Detection
-                </h3>
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-[var(--color-on-surface-muted)] uppercase tracking-wider font-semibold">
-                      Detected Intent
-                    </span>
-                    <span
-                      className="px-3 py-1 rounded-full text-[12px] font-bold uppercase"
-                      style={{
-                        backgroundColor: `${priorityColor(intentResult.priority)}15`,
-                        color: priorityColor(intentResult.priority),
-                      }}
-                    >
-                      {intentResult.intent}
-                    </span>
+            <div className="card-lifted p-5 animate-fade-in">
+              <h3 className="font-[var(--font-display)] text-[13px] font-semibold text-[var(--color-on-surface)] mb-4 flex items-center gap-2">
+                <Brain className="h-4 w-4 text-[var(--color-primary)]" /> Intent Detection
+              </h3>
+              <div className="space-y-3">
+                <Row label="Detected intent">
+                  <span className="px-3 py-1 rounded-full text-[12px] font-bold uppercase" style={{ backgroundColor: `color-mix(in srgb, ${priorityColor(intentResult.priority)} 12%, transparent)`, color: priorityColor(intentResult.priority) }}>{intentResult.intent}</span>
+                </Row>
+                <Row label="Confidence">
+                  <div className="flex items-center gap-2">
+                    <div className="w-20 h-1.5 rounded-full bg-[var(--color-surface-container-high)] overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-700" style={{ width: `${intentResult.confidence * 100}%`, backgroundColor: priorityColor(intentResult.priority) }} />
+                    </div>
+                    <span className="font-[var(--font-display)] text-[12px] font-bold" style={{ color: priorityColor(intentResult.priority) }}>{(intentResult.confidence * 100).toFixed(0)}%</span>
                   </div>
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-[var(--color-on-surface-muted)] uppercase tracking-wider font-semibold">
-                      Confidence
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <div className="w-20 h-1.5 rounded-full bg-[var(--color-surface-container-high)] overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-700"
-                          style={{
-                            width: `${intentResult.confidence * 100}%`,
-                            backgroundColor: priorityColor(intentResult.priority),
-                          }}
-                        />
-                      </div>
-                      <span className="font-[var(--font-display)] text-[12px] font-bold"
-                        style={{ color: priorityColor(intentResult.priority) }}>
-                        {(intentResult.confidence * 100).toFixed(0)}%
-                      </span>
+                </Row>
+                <Row label="Priority"><span className="text-[12px] font-semibold capitalize" style={{ color: priorityColor(intentResult.priority) }}>{intentResult.priority}</span></Row>
+                {intentResult.matched_keywords.length > 0 && (
+                  <div>
+                    <span className="text-[11px] text-[var(--color-on-surface-muted)] uppercase tracking-wider font-semibold">Matched keywords</span>
+                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                      {intentResult.matched_keywords.map((kw) => <span key={kw} className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--color-surface-container-high)]">{kw}</span>)}
                     </div>
                   </div>
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-[var(--color-on-surface-muted)] uppercase tracking-wider font-semibold">
-                      Priority
-                    </span>
-                    <span className="text-[12px] font-semibold capitalize"
-                      style={{ color: priorityColor(intentResult.priority) }}>
-                      {intentResult.priority}
-                    </span>
+                )}
+                {intentResult.extracted_location && (
+                  <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-[var(--radius-sm)] bg-[var(--color-surface-container-low)]">
+                    <MapPin className="h-3.5 w-3.5 text-[var(--color-primary)]" />
+                    <span className="text-[12px] font-medium">{intentResult.extracted_location.name}</span>
+                    <span className="text-[10px] text-[var(--color-on-surface-muted)]">({intentResult.extracted_location.latitude.toFixed(3)}, {intentResult.extracted_location.longitude.toFixed(3)})</span>
+                    {actionResult?.location_source && <span className="ml-auto text-[9px] font-bold uppercase text-[var(--color-on-surface-muted)]">{actionResult.location_source === "device-gps" ? "GPS" : "from speech"}</span>}
                   </div>
-
-                  {intentResult.matched_keywords.length > 0 && (
-                    <div>
-                      <span className="text-[11px] text-[var(--color-on-surface-muted)] uppercase tracking-wider font-semibold">
-                        Matched Keywords
-                      </span>
-                      <div className="flex flex-wrap gap-1.5 mt-1.5">
-                        {intentResult.matched_keywords.map((kw) => (
-                          <span
-                            key={kw}
-                            className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--color-surface-container-high)] text-[var(--color-on-surface)]"
-                          >
-                            {kw}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {intentResult.extracted_location && (
-                    <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-[var(--radius-sm)] bg-[var(--color-surface-container-low)]">
-                      <MapPin className="h-3.5 w-3.5 text-[var(--color-primary)]" />
-                      <span className="text-[12px] font-medium">
-                        Location: {intentResult.extracted_location.name}
-                      </span>
-                      <span className="text-[10px] text-[var(--color-on-surface-muted)]">
-                        ({intentResult.extracted_location.latitude.toFixed(3)}, {intentResult.extracted_location.longitude.toFixed(3)})
-                      </span>
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* Action Result Card */}
           {actionResult && (
             <div className="card-lifted p-5 animate-fade-in">
-              <h3 className="font-[var(--font-display)] text-[13px] font-semibold tracking-tight text-[var(--color-on-surface)] mb-4 flex items-center gap-2">
-                <Activity className="h-4 w-4 text-[var(--color-primary)]" />
-                Action Result
+              <h3 className="font-[var(--font-display)] text-[13px] font-semibold text-[var(--color-on-surface)] mb-4 flex items-center gap-2">
+                <Activity className="h-4 w-4 text-[var(--color-primary)]" /> Action Result
               </h3>
-
               <div className="bg-[var(--color-surface-container-low)] rounded-[var(--radius-md)] p-4 space-y-3">
-                <p className="text-[12px] font-medium text-[var(--color-on-surface)]">
-                  {actionResult.message}
-                </p>
+                <p className="text-[12px] font-medium text-[var(--color-on-surface)]">{actionResult.message}</p>
 
-                {/* Emergency Response Data */}
-                {(actionResult.type === "emergency" || actionResult.type === "help") && actionResult.data && (
-                  <div className="space-y-3 mt-3">
-                    {actionResult.data.nearest_ambulance && (
-                      <div className="flex items-start gap-3 p-3 rounded-[var(--radius-sm)] bg-[var(--color-surface)]">
-                        <Siren className="h-5 w-5 text-[var(--color-error)] mt-0.5 shrink-0" />
-                        <div>
-                          <p className="text-[12px] font-semibold text-[var(--color-on-surface)]">
-                            Nearest Ambulance: {actionResult.data.nearest_ambulance.vehicle_id}
-                          </p>
-                          <p className="text-[11px] text-[var(--color-on-surface-muted)]">
-                            Distance: {actionResult.data.nearest_ambulance.distance_km} km •
-                            ETA: {actionResult.data.nearest_ambulance.estimated_arrival_min} min •
-                            Status: {actionResult.data.nearest_ambulance.status}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {actionResult.data.nearest_hospital && (
-                      <div className="flex items-start gap-3 p-3 rounded-[var(--radius-sm)] bg-[var(--color-surface)]">
-                        <Hospital className="h-5 w-5 text-[var(--color-primary)] mt-0.5 shrink-0" />
-                        <div>
-                          <p className="text-[12px] font-semibold text-[var(--color-on-surface)]">
-                            Nearest Hospital: {actionResult.data.nearest_hospital.hospital_name}
-                          </p>
-                          <p className="text-[11px] text-[var(--color-on-surface-muted)]">
-                            Distance: {actionResult.data.nearest_hospital.distance_km} km •
-                            City: {actionResult.data.nearest_hospital.city} •
-                            Beds: {actionResult.data.nearest_hospital.available_beds}
-                          </p>
-                          <p className="text-[10px] text-[var(--color-on-surface-muted)]">
-                            Emergency: {actionResult.data.nearest_hospital.has_emergency} •
-                            ICU: {actionResult.data.nearest_hospital.icu_beds} beds
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                {actionResult.type === "need_location" && (
+                  <button onClick={requestLocation} className="btn-primary text-[11px] px-3 py-1.5 rounded-md flex items-center gap-1.5">
+                    <LocateFixed className="h-3.5 w-3.5" /> Share my location
+                  </button>
                 )}
 
-                {actionResult.type === "traffic" && (
-                  <div className="flex items-center gap-2 p-3 rounded-[var(--radius-sm)] bg-[var(--color-surface)]">
-                    <Activity className="h-4 w-4 text-[var(--color-warning)]" />
-                    <span className="text-[12px]">Redirecting to traffic dashboard...</span>
+                {emergency?.dispatched && (
+                  <div className="flex items-start gap-3 p-3 rounded-[var(--radius-sm)] bg-[var(--color-error)]/8 border-l-[3px] border-[var(--color-error)]">
+                    <Siren className="h-5 w-5 text-[var(--color-error)] mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-[12px] font-bold text-[var(--color-on-surface)]">{emergency.dispatched.name} dispatched · ETA {emergency.dispatched.eta_min} min</p>
+                      <p className="text-[11px] text-[var(--color-on-surface-muted)]">Then transport to {emergency.dispatched.then_to}. Track it on <Link href="/tracking" className="underline text-[var(--color-primary)]">Fleet Tracking</Link>.</p>
+                    </div>
                   </div>
                 )}
+                {emergency && !emergency.dispatched && emergency.nearest_ambulance && (
+                  <div className="flex items-start gap-3 p-3 rounded-[var(--radius-sm)] bg-[var(--color-surface)]">
+                    <Siren className="h-5 w-5 text-[var(--color-error)] mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-[12px] font-semibold">Nearest ambulance: {emergency.nearest_ambulance.vehicle_id}</p>
+                      <p className="text-[11px] text-[var(--color-on-surface-muted)]">{emergency.nearest_ambulance.distance_km} km · ETA {emergency.nearest_ambulance.estimated_arrival_min} min · {emergency.nearest_ambulance.status}</p>
+                      <Link href="/dispatch" className="text-[11px] underline text-[var(--color-primary)]">Open Dispatch to assign manually</Link>
+                    </div>
+                  </div>
+                )}
+                {emergency?.recommended_hospitals && emergency.recommended_hospitals.length > 0 && (
+                  <div className="p-3 rounded-[var(--radius-sm)] bg-[var(--color-surface)]">
+                    <p className="text-[11px] font-bold mb-2 flex items-center gap-1.5"><Hospital className="h-4 w-4 text-[var(--color-primary)]" /> Best hospitals by live {emergency.bed_need?.toUpperCase()} availability</p>
+                    <ol className="space-y-1.5">
+                      {emergency.recommended_hospitals.map((h, i) => (
+                        <li key={h.id} className="flex items-center gap-2 text-[11px]">
+                          <span className="font-bold text-[var(--color-primary)] w-4">{i + 1}</span>
+                          <span className="flex-1 min-w-0"><b>{h.name}</b> <span className="text-[var(--color-on-surface-muted)]">· {h.distance_km} km · ~{h.eta_min} min · {h.ward_available} free · ER {h.er_wait_min} min</span></span>
+                          {!h.accepting_critical && <span className="text-[9px] font-bold text-[var(--color-error)]">DIVERSION</span>}
+                        </li>
+                      ))}
+                    </ol>
+                    <Link href="/hospitals" className="text-[10px] underline text-[var(--color-primary)]">Open live hospital monitor</Link>
+                  </div>
+                )}
+                {emergency?.area_risk && (
+                  <p className="text-[11px] text-[var(--color-on-surface-muted)]">Area risk now: <b style={{ color: LEVEL_COLOR[emergency.area_risk.level] }}>{emergency.area_risk.level}</b> ({emergency.area_risk.percentile.toFixed(0)}th percentile, {emergency.area_risk.city})</p>
+                )}
 
-                {actionResult.type === "risk" && (
-                  <div className="flex items-center gap-2 p-3 rounded-[var(--radius-sm)] bg-[var(--color-surface)]">
-                    <AlertTriangle className="h-4 w-4 text-[var(--color-warning)]" />
-                    <span className="text-[12px]">
-                      Risk prediction loaded for coordinates
-                      {actionResult.data?.coordinates && (
-                        <span className="text-[var(--color-on-surface-muted)]">
-                          {" "}({actionResult.data.coordinates.latitude}, {actionResult.data.coordinates.longitude})
-                        </span>
-                      )}
-                    </span>
+                {riskData && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <span className="font-[var(--font-display)] text-2xl font-bold" style={{ color: LEVEL_COLOR[riskData.risk.risk_level] }}>{riskData.risk.risk_level}</span>
+                      <span className="text-[11px] text-[var(--color-on-surface-muted)]">{riskData.risk.percentile.toFixed(0)}th pct · P(fatal/serious) {(riskData.risk.p_fatal_or_serious * 100).toFixed(1)}%</span>
+                    </div>
+                    {riskData.risk.factors.map((f) => (
+                      <div key={f.factor} className="text-[11px] flex gap-2">
+                        <span className="font-semibold w-36 shrink-0">{f.factor}</span>
+                        <span className="text-[var(--color-on-surface-muted)]">{f.value} — {f.detail}</span>
+                      </div>
+                    ))}
+                    <Link href="/risk" className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-primary)]"><BrainCircuit className="h-3.5 w-3.5" /> Explore in Risk AI</Link>
                   </div>
                 )}
               </div>
             </div>
           )}
 
-          {/* Map Preview with real markers */}
-          {stage === "complete" && actionResult && (actionResult.type === "emergency" || actionResult.type === "help") && actionResult.data && (
+          {stage === "complete" && emergency && (
             <div className="card-lifted overflow-hidden animate-fade-in">
-              <div className="px-4 pt-3 pb-2 flex items-center justify-between">
-                <h3 className="text-[13px] font-semibold text-[var(--color-on-surface)] flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-[var(--color-primary)]" />
-                  Emergency Response Map
-                </h3>
+              <div className="px-4 pt-3 pb-2 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-[13px] font-semibold flex items-center gap-2"><MapPin className="h-4 w-4 text-[var(--color-primary)]" /> Emergency Response Map</h3>
                 <div className="flex items-center gap-3 text-[10px]">
                   <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#f59e0b]" />Incident</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#ef4444]" />Ambulance</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />Hospital</span>
+                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#dc2626]" />Ambulance</span>
+                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#1d4ed8]" />Hospital</span>
                 </div>
               </div>
-              <div style={{ height: 320 }}>
-                <VoiceResultMap data={actionResult.data} />
-              </div>
+              <div style={{ height: 320 }}><VoiceResultMap data={emergency} /></div>
             </div>
           )}
 
-          {/* All nearby ambulances & hospitals list */}
-          {stage === "complete" && actionResult && (actionResult.type === "emergency" || actionResult.type === "help") && actionResult.data && (
+          {stage === "complete" && emergency && (
             <div className="card-lifted p-4 animate-fade-in">
-              <h4 className="text-[12px] font-semibold text-[var(--color-on-surface)] mb-3 flex items-center gap-2">
-                <Ambulance className="h-4 w-4 text-[var(--color-error)]" />
-                All Nearby Ambulances ({actionResult.data.all_nearby_ambulances?.length || 0})
-              </h4>
+              <h4 className="text-[12px] font-semibold mb-3 flex items-center gap-2"><Ambulance className="h-4 w-4 text-[var(--color-error)]" /> Nearby Ambulances ({emergency.all_nearby_ambulances?.length || 0})</h4>
               <div className="space-y-2">
-                {(actionResult.data.all_nearby_ambulances || []).map((a: any, i: number) => (
-                  <div key={i} className="flex items-center gap-3 p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-container-low)]">
-                    <div className="h-7 w-7 rounded-full bg-[rgba(239,68,68,0.15)] flex items-center justify-center shrink-0">
-                      <Siren className="h-3.5 w-3.5 text-[var(--color-error)]" />
-                    </div>
+                {(emergency.all_nearby_ambulances || []).map((a) => (
+                  <div key={a.vehicle_id} className="flex items-center gap-3 p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-container-low)]">
+                    <div className="h-7 w-7 rounded-full bg-[rgba(239,68,68,0.15)] flex items-center justify-center shrink-0"><Siren className="h-3.5 w-3.5 text-[var(--color-error)]" /></div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[11px] font-semibold text-[var(--color-on-surface)]">{a.vehicle_id}</p>
-                      <p className="text-[10px] text-[var(--color-on-surface-muted)]">{a.distance_km} km • ETA {a.estimated_arrival_min} min • {a.status}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <h4 className="text-[12px] font-semibold text-[var(--color-on-surface)] mt-4 mb-3 flex items-center gap-2">
-                <Hospital className="h-4 w-4 text-[var(--color-primary)]" />
-                All Nearby Hospitals ({actionResult.data.all_nearby_hospitals?.length || 0})
-              </h4>
-              <div className="space-y-2">
-                {(actionResult.data.all_nearby_hospitals || []).map((h: any, i: number) => (
-                  <div key={i} className="flex items-center gap-3 p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-container-low)]">
-                    <div className="h-7 w-7 rounded-full bg-[rgba(59,130,246,0.15)] flex items-center justify-center shrink-0">
-                      <Hospital className="h-3.5 w-3.5 text-[var(--color-primary)]" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[11px] font-semibold text-[var(--color-on-surface)]">{h.hospital_name}</p>
-                      <p className="text-[10px] text-[var(--color-on-surface-muted)]">{h.distance_km} km • {h.city} • Beds: {h.available_beds}/{h.total_beds} • ICU: {h.icu_beds}</p>
-                      <p className="text-[10px] text-[var(--color-on-surface-muted)]">Emergency: {h.has_emergency} • Ambulance: {h.has_ambulance}</p>
+                      <p className="text-[11px] font-semibold">{a.vehicle_id}{a.vehicle_id === emergency.dispatched?.vehicle_id && <span className="ml-2 text-[9px] font-bold text-[var(--color-error)]">DISPATCHED</span>}</p>
+                      <p className="text-[10px] text-[var(--color-on-surface-muted)]">{a.distance_km} km · ETA {a.estimated_arrival_min} min · {a.status}</p>
                     </div>
                   </div>
                 ))}
@@ -711,52 +547,38 @@ export default function VoiceCommandPage() {
             </div>
           )}
 
-          {/* Idle State Info */}
           {stage === "idle" && !intentResult && (
             <div className="card-lifted p-6">
-              <h3 className="font-[var(--font-display)] text-[13px] font-semibold tracking-tight text-[var(--color-on-surface)] mb-4">
-                How It Works
-              </h3>
+              <h3 className="font-[var(--font-display)] text-[13px] font-semibold text-[var(--color-on-surface)] mb-4">How It Works</h3>
               <div className="space-y-4">
                 {[
-                  { icon: Mic, label: "1. Voice Input", desc: "Record audio or upload a file" },
-                  { icon: Waves, label: "2. Speech-to-Text", desc: "Whisper AI converts audio to text" },
-                  { icon: Brain, label: "3. Intent Detection", desc: "NLP detects: accident, traffic, help, risk" },
-                  { icon: ArrowRight, label: "4. Action Routing", desc: "System triggers appropriate response" },
+                  { icon: Mic, label: "1. Voice / text input", desc: "Browser speech recognition (Indian English or Hindi), typed text, or an uploaded recording (Whisper)" },
+                  { icon: Brain, label: "2. Intent detection", desc: "Word-boundary keyword NLP: accident, fire, help, traffic or risk, with urgency-weighted scoring" },
+                  { icon: MapPin, label: "3. Location", desc: "Place names geocoded with OpenStreetMap (offline city fallback), else your device GPS" },
+                  { icon: ArrowRight, label: "4. Action", desc: "Auto-dispatch nearest free ambulance, rank hospitals by live beds, or run the real-data risk engine" },
                 ].map((step) => (
                   <div key={step.label} className="flex items-start gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-surface-container-high)] shrink-0">
-                      <step.icon className="h-4 w-4 text-[var(--color-primary)]" />
-                    </div>
+                    <div className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-surface-container-high)] shrink-0"><step.icon className="h-4 w-4 text-[var(--color-primary)]" /></div>
                     <div>
-                      <p className="text-[12px] font-semibold text-[var(--color-on-surface)]">{step.label}</p>
+                      <p className="text-[12px] font-semibold">{step.label}</p>
                       <p className="text-[11px] text-[var(--color-on-surface-muted)]">{step.desc}</p>
                     </div>
                   </div>
                 ))}
               </div>
-
-              <div className="mt-5 pt-4 border-t border-[var(--color-surface-container-high)]">
-                <p className="text-[11px] text-[var(--color-on-surface-muted)] font-medium uppercase tracking-wider mb-2">
-                  Try saying:
-                </p>
-                <div className="space-y-1.5">
-                  {[
-                    "\"Accident near Andheri\"",
-                    "\"Show traffic congestion\"",
-                    "\"Help! Need an ambulance near Bandra\"",
-                    "\"What is the risk level in this area?\"",
-                  ].map((example) => (
-                    <p key={example} className="text-[12px] text-[var(--color-on-surface-muted)] italic">
-                      {example}
-                    </p>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-[11px] text-[var(--color-on-surface-muted)] uppercase tracking-wider font-semibold">{label}</span>
+      {children}
     </div>
   );
 }

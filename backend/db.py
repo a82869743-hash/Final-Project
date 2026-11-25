@@ -20,9 +20,20 @@ def get_supabase():
         except Exception as e:
             print("Supabase client initialization error:", e)
     else:
-        print("Warning: Missing Supabase environment variables. Database logging disabled.")
-    
+        print("[INFO] Supabase not configured.")
+
+    if _supabase_client is None:
+        # Fallback: local SQLite store with the same query API
+        from local_db import local_client, DB_PATH
+        _supabase_client = local_client
+        print(f"[OK] Using local SQLite database at {DB_PATH}")
+
     return _supabase_client
+
+
+def db_mode() -> str:
+    client = get_supabase()
+    return "sqlite-local" if getattr(client, "is_local", False) else "supabase"
 
 def upsert_vehicle(vehicle: dict):
     client = get_supabase()
@@ -117,3 +128,11 @@ def insert_prediction(data: dict):
     except Exception as e:
         print("Failed to save prediction:", e)
         return None
+
+
+def __getattr__(name):
+    """Lazy `from db import supabase` (PEP 562) — keeps cold starts fast and
+    fixes ImportError in modules that import the client directly."""
+    if name == "supabase":
+        return get_supabase()
+    raise AttributeError(f"module 'db' has no attribute {name!r}")

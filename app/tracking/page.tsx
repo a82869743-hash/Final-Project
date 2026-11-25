@@ -63,6 +63,13 @@ interface SimAlert {
 
 /* ════════════════════════════════════════════════════════════════ */
 
+/** Small stable hash so per-vehicle display values don't flicker between renders */
+function hashId(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h;
+}
+
 export default function TrackingPage() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
@@ -194,7 +201,8 @@ export default function TrackingPage() {
             const cfg = STATUS[v.status] || STATUS.available;
             const isSelected = selectedId === v.id;
             const emoji = vIcon(v.name);
-            const battery = 60 + Math.floor(Math.random() * 35); // simulated
+            const seed = hashId(v.id);
+            const battery = 60 + (seed % 35); // stable per vehicle (was re-randomised every render)
 
             return (
               <button key={v.id} onClick={() => setSelectedId(isSelected ? null : v.id)}
@@ -239,7 +247,7 @@ export default function TrackingPage() {
                   <div className="mt-3 pt-3 border-t border-[var(--color-outline-variant)] animate-fade-in">
                     <div className="grid grid-cols-3 gap-2 text-[10px]">
                       <div><span className="text-[var(--color-on-surface-muted)]">ETA</span>
-                        <p className="font-bold text-[var(--color-on-surface)]">{v.status === "en_route" ? `${Math.ceil(Math.random() * 8 + 2)} min` : "—"}</p></div>
+                        <p className="font-bold text-[var(--color-on-surface)]">{v.status === "en_route" || v.status === "critical" ? `${3 + (seed % 9)} min` : "—"}</p></div>
                       <div><span className="text-[var(--color-on-surface-muted)]">Battery</span>
                         <p className="font-bold" style={{ color: battery > 50 ? "#34C759" : "#FF9500" }}>{battery}%</p></div>
                       <div><span className="text-[var(--color-on-surface-muted)]">Heading</span>

@@ -22,18 +22,18 @@ except ImportError:
 print()
 print("--- ENVIRONMENT CHECK ---")
 if os.getenv("SUPABASE_URL"):
-    print(f"[OK] SUPABASE URL: {os.getenv('SUPABASE_URL')}")
+    print("[OK] SUPABASE URL: set")
 else:
     print("[MISSING] SUPABASE URL: Missing")
     
 if os.getenv("SUPABASE_KEY"):
-    print(f"[OK] SUPABASE KEY: {'*' * 10}{os.getenv('SUPABASE_KEY')[-5:] if os.getenv('SUPABASE_KEY') else ''}")
+    print("[OK] SUPABASE KEY: set")
 else:
     print("[MISSING] SUPABASE KEY: Missing")
 
 openai_key = os.getenv("OPENAI_API_KEY")
 if openai_key and openai_key.startswith("sk-") and len(openai_key) > 20:
-    print(f"[OK] OPENAI KEY: {openai_key[:10]}...{openai_key[-4:]}")
+    print("[OK] OPENAI KEY: set")
 else:
     print("[MISSING] OPENAI_API_KEY: Not set or invalid — voice features will not work")
 print("-------------------------\n")
@@ -58,20 +58,17 @@ from routes.risk_zones import router as risk_zones_router
 from routes.voice_intent import router as voice_intent_router
 from routes.emergency import router as emergency_router
 from routes.text_intent import router as text_intent_router
+from routes.hospitals import router as hospitals_router
 
-# ── NEW: Video Intelligence Module (feature-flagged) ──
-_enable_video_ai = os.getenv("ENABLE_VIDEO_AI", "false").lower() in ("true", "1", "yes")
-if _enable_video_ai:
-    try:
-        from routes.video import router as video_router
-        from routes.video_ws import router as video_ws_router
-        print("[OK] Video Intelligence module loaded")
-    except Exception as _e:
-        print(f"[WARN] Video Intelligence module unavailable: {_e}")
-        video_router = None
-        video_ws_router = None
-else:
-    print("[INFO] Video Intelligence disabled (ENABLE_VIDEO_AI=false)")
+# ── Video Intelligence: routes always on; ENABLE_VIDEO_AI only toggles the
+#    heavy YOLO model (the OpenCV detector works without it) ──
+try:
+    from routes.video import router as video_router
+    from routes.video_ws import router as video_ws_router
+    print("[OK] Video Intelligence routes loaded "
+          f"(YOLO {'enabled' if os.getenv('ENABLE_VIDEO_AI', 'false').lower() in ('true', '1', 'yes') else 'disabled'})")
+except Exception as _e:
+    print(f"[WARN] Video Intelligence module unavailable: {_e}")
     video_router = None
     video_ws_router = None
 
@@ -120,6 +117,7 @@ app.include_router(risk_zones_router, prefix="/api", tags=["Risk Zones"])
 app.include_router(voice_intent_router, prefix="/api", tags=["Voice Intent"])
 app.include_router(emergency_router, prefix="/api", tags=["Emergency"])
 app.include_router(text_intent_router, prefix="/api", tags=["Text Intent"])
+app.include_router(hospitals_router, prefix="/api", tags=["Hospitals"])
 
 # ── NEW: Video Intelligence routers (fail-safe) ──
 if video_router is not None:
@@ -139,7 +137,7 @@ async def health_probe():
     from datetime import datetime, timezone
     return {
         "status": "online",
-        "database": "connected" if os.getenv("SUPABASE_URL") else "unconfigured",
+        "database": "supabase" if os.getenv("SUPABASE_URL") else "sqlite-local",
         "ai": "ready" if os.getenv("OPENAI_API_KEY") else "mock",
         "websocket": "active",
         "timestamp": datetime.now(timezone.utc).isoformat(),

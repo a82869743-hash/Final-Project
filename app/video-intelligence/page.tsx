@@ -29,7 +29,24 @@ import {
   videoApi,
   connectVideoAlertWS,
   disconnectVideoAlertWS,
+  api,
 } from "@/lib/api";
+
+/* Camera locations used to geotag an uploaded clip */
+const CAMERA_SITES = [
+  { name: "Mumbai — Western Express Hwy", lat: 19.1136, lng: 72.8697 },
+  { name: "Delhi — Ring Road, AIIMS", lat: 28.5672, lng: 77.2100 },
+  { name: "Bengaluru — Silk Board Jn", lat: 12.9172, lng: 77.6229 },
+  { name: "Chennai — Kathipara Jn", lat: 13.0067, lng: 80.2006 },
+  { name: "Pune — Mumbai-Pune Expwy", lat: 18.7546, lng: 73.4062 },
+  { name: "Ahmedabad — SG Highway", lat: 23.0300, lng: 72.5070 },
+  { name: "Vadodara — NH48", lat: 22.3072, lng: 73.1812 },
+  { name: "Hyderabad — ORR Gachibowli", lat: 17.4401, lng: 78.3489 },
+  { name: "Kolkata — EM Bypass", lat: 22.5390, lng: 88.3950 },
+  { name: "Jaipur — NH48 Delhi Rd", lat: 26.9600, lng: 75.8400 },
+];
+const MAX_MB = 80;
+const ALLOWED_EXT = [".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"];
 
 const severityColors: Record<string, string> = {
   critical: "var(--color-error)",
@@ -62,13 +79,22 @@ export default function VideoIntelligencePage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<VideoAnalysisResponse | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [statusError, setStatusError] = useState(false);
+  const [site, setSite] = useState(0);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [fileName, setFileName] = useState("");
+  const [dispatching, setDispatching] = useState(false);
+  const [dispatchMsg, setDispatchMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load status and events
   useEffect(() => {
-    videoApi.getStatus().then(setStatus).catch(() => {});
-    videoApi.getEvents(20).then((r) => setEvents(r.events)).catch(() => {});
+    videoApi.getStatus().then((s) => { setStatus(s); setStatusError(false); }).catch(() => setStatusError(true));
+    videoApi.getEvents(20).then((r) => setEvents(r.events ?? [])).catch(() => {});
   }, []);
+
+  // Release the preview object URL when replaced/unmounted
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
   // Connect to video alert WebSocket
   useEffect(() => {
@@ -80,16 +106,29 @@ export default function VideoIntelligencePage() {
 
   // Handle file upload
   const handleFile = useCallback(async (file: File) => {
+    const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    setDispatchMsg(null);
+    if (!ALLOWED_EXT.includes(ext)) {
+      setResult({ id: "", event_type: "error", severity: "low", confidence: 0, objects_detected: [], vehicle_count: 0, people_count: 0, timestamp: "", latitude: 0, longitude: 0, video_source: "", frames_analyzed: 0, processing_time_seconds: 0, detection_method: "", scene_label: "", error: `Unsupported format ${ext}. Use ${ALLOWED_EXT.join(", ")}` });
+      return;
+    }
+    if (file.size > MAX_MB * 1024 * 1024) {
+      setResult({ id: "", event_type: "error", severity: "low", confidence: 0, objects_detected: [], vehicle_count: 0, people_count: 0, timestamp: "", latitude: 0, longitude: 0, video_source: "", frames_analyzed: 0, processing_time_seconds: 0, detection_method: "", scene_label: "", error: `File is ${(file.size / 1048576).toFixed(0)} MB — max ${MAX_MB} MB` });
+      return;
+    }
+    setPreview(URL.createObjectURL(file));
+    setFileName(file.name);
     setAnalyzing(true);
     setResult(null);
+    const cam = CAMERA_SITES[site];
     try {
       const res = await videoApi.analyzeVideo(file, {
-        videoSource: "dashboard_upload",
+        videoSource: cam.name, latitude: cam.lat, longitude: cam.lng, frameInterval: 2,
       });
       setResult(res);
       // Refresh events list
       videoApi.getEvents(20).then((r) => setEvents(r.events)).catch(() => {});
-    } catch (e: any) {
+    } catch (e) {
       setResult({
         id: "",
         event_type: "error",
@@ -106,12 +145,33 @@ export default function VideoIntelligencePage() {
         processing_time_seconds: 0,
         detection_method: "",
         scene_label: "",
-        error: e.message || "Analysis failed",
+        error: e instanceof Error
+          ? (e.name === "AbortError" ? "Analysis timed out — try a shorter clip" : e.message)
+          : "Analysis failed",
       });
     } finally {
       setAnalyzing(false);
     }
-  }, []);
+  }, [site]);
+
+  const dispatchToIncident = useCallback(async () => {
+    if (!result) return;
+    const cam = CAMERA_SITES[site];
+    setDispatching(true); setDispatchMsg(null);
+    try {
+      const em = await api.emergency({ latitude: result.latitude || cam.lat, longitude: result.longitude || cam.lng });
+      const amb = em.nearest_ambulance;
+      if (!amb?.vehicle_id) throw new Error("No ambulance available nearby");
+      const d = await api.dispatch({
+        vehicle_id: amb.vehicle_id, incident_location: `Video incident · ${cam.name}`,
+        incident_lat: result.latitude || cam.lat, incident_lng: result.longitude || cam.lng,
+        priority: result.severity === "critical" ? "critical" : "high",
+      });
+      setDispatchMsg(`${d.vehicle_id} dispatched — ETA ${d.estimated_arrival}. Nearest hospital: ${em.nearest_hospital?.hospital_name ?? "—"}`);
+    } catch (e) {
+      setDispatchMsg(e instanceof Error ? e.message : "Dispatch failed");
+    } finally { setDispatching(false); }
+  }, [result, site]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -124,9 +184,9 @@ export default function VideoIntelligencePage() {
   );
 
   return (
-    <div className="flex flex-col gap-4 h-[calc(100vh-7rem)] animate-fade-in">
+    <div className="flex flex-col gap-4 lg:h-[calc(100vh-7rem)] animate-fade-in">
       {/* ── Top Stats Bar ── */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card-lifted p-4 flex items-center gap-3">
           <div
             className="h-10 w-10 rounded-[var(--radius-md)] flex items-center justify-center"
@@ -148,7 +208,7 @@ export default function VideoIntelligencePage() {
               AI Engine
             </span>
             <p className="text-sm font-semibold text-[var(--color-on-surface)] capitalize">
-              {status?.status ?? "Loading..."}
+              {statusError ? "Backend unreachable" : status?.status ?? "Loading..."}
               {status?.demo_mode && (
                 <span className="ml-1.5 text-[9px] font-bold text-[#6366f1] bg-[rgba(99,102,241,0.12)] px-1.5 py-0.5 rounded-full uppercase">Demo</span>
               )}
@@ -165,7 +225,7 @@ export default function VideoIntelligencePage() {
               Detection
             </span>
             <p className="text-sm font-semibold text-[var(--color-on-surface)]">
-              {status?.yolo_available ? "YOLOv8s" : "Heuristic + Demo"}
+              {status?.detector ?? (status?.yolo_available ? "YOLOv8" : "OpenCV heuristic")}
             </p>
           </div>
         </div>
@@ -200,9 +260,19 @@ export default function VideoIntelligencePage() {
       </div>
 
       {/* ── Main Content ── */}
-      <div className="flex gap-4 flex-1 overflow-hidden">
+      <div className="flex flex-col lg:flex-row gap-4 flex-1 lg:overflow-hidden">
         {/* Left: Upload + Results */}
-        <div className="flex-1 flex flex-col gap-4 overflow-y-auto pr-1">
+        <div className="flex-1 flex flex-col gap-4 lg:overflow-y-auto pr-1">
+          {/* Camera site */}
+          <div className="card-lifted p-4 flex flex-wrap items-center gap-3">
+            <Camera className="h-4 w-4 text-[var(--color-primary)]" />
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-on-surface-muted)]">Camera site</span>
+            <select value={site} onChange={(e) => setSite(+e.target.value)} disabled={analyzing}
+              className="flex-1 min-w-[200px] text-[12px] bg-[var(--color-surface-container-low)] rounded-md px-2 py-1.5 outline-none">
+              {CAMERA_SITES.map((c, i) => <option key={c.name} value={i}>{c.name}</option>)}
+            </select>
+            <span className="text-[10px] text-[var(--color-on-surface-muted)]">Geotags the clip so alerts and dispatch go to the right place</span>
+          </div>
           {/* Upload Zone */}
           <div
             className={`card-lifted p-6 border-2 border-dashed transition-all duration-300 cursor-pointer ${
@@ -216,15 +286,17 @@ export default function VideoIntelligencePage() {
             }}
             onDragLeave={() => setDragOver(false)}
             onDrop={onDrop}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => !analyzing && fileInputRef.current?.click()}
           >
             <input
               ref={fileInputRef}
               type="file"
               accept="video/*"
               className="hidden"
+              disabled={analyzing}
               onChange={(e) => {
                 const f = e.target.files?.[0];
+                e.target.value = ""; // allow analysing the same file again
                 if (f) handleFile(f);
               }}
             />
@@ -236,7 +308,7 @@ export default function VideoIntelligencePage() {
                     Analyzing video frames...
                   </span>
                   <span className="text-[10px] text-[var(--color-on-surface-muted)]">
-                    Running YOLOv8s detection pipeline
+                    {fileName} · {status?.detector ?? "detector"} on {CAMERA_SITES[site].name}
                   </span>
                 </>
               ) : (
@@ -246,12 +318,18 @@ export default function VideoIntelligencePage() {
                     Drop video file or click to upload
                   </span>
                   <span className="text-[11px] text-[var(--color-on-surface-muted)]">
-                    MP4, AVI, MOV, MKV, WebM supported
+                    MP4, AVI, MOV, MKV, WebM · up to {MAX_MB} MB
                   </span>
                 </>
               )}
             </div>
           </div>
+
+          {preview && (
+            <div className="card-lifted overflow-hidden">
+              <video src={preview} controls muted className="w-full max-h-[260px] bg-black" />
+            </div>
+          )}
 
           {/* Analysis Result */}
           {result && (
@@ -318,6 +396,19 @@ export default function VideoIntelligencePage() {
                           </span>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {/* Dispatch from video */}
+                  {(result.severity === "high" || result.severity === "critical" ||
+                    (result.accident_type && result.accident_type !== "none")) && (
+                    <div className="flex flex-wrap items-center gap-3 p-3 rounded-[var(--radius-md)] bg-[var(--color-error)]/6">
+                      <button onClick={dispatchToIncident} disabled={dispatching}
+                        className="btn-primary text-[11px] px-3 py-1.5 rounded-md flex items-center gap-1.5 disabled:opacity-50">
+                        {dispatching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Navigation className="h-3.5 w-3.5" />}
+                        Dispatch nearest ambulance
+                      </button>
+                      <span className="text-[11px] text-[var(--color-on-surface-muted)]">{dispatchMsg ?? `to ${CAMERA_SITES[site].name}`}</span>
                     </div>
                   )}
 
@@ -502,7 +593,7 @@ export default function VideoIntelligencePage() {
         </div>
 
         {/* Right: Live Alerts Feed */}
-        <div className="w-[320px] shrink-0 card-lifted overflow-hidden flex flex-col">
+        <div className="w-full lg:w-[320px] min-h-[260px] shrink-0 card-lifted overflow-hidden flex flex-col">
           <div className="px-4 pt-4 pb-3 flex items-center justify-between">
             <h3 className="text-[13px] font-semibold text-[var(--color-on-surface)] flex items-center gap-2">
               <Radio className="h-4 w-4 text-[var(--color-error)]" />

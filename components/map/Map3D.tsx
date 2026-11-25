@@ -3,9 +3,10 @@
 import { useEffect, useRef, useMemo, useState, useCallback } from "react";
 import L from "leaflet";
 import {
-  MapContainer, TileLayer, Marker, Popup, Circle, useMap,
+  MapContainer, Marker, Popup, Circle, useMap,
   Polyline, Tooltip, CircleMarker,
 } from "react-leaflet";
+import BaseTiles from "@/components/map/BaseTiles";
 import { type Vehicle, type PredictionResponse, type RiskZone } from "@/lib/api";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -229,11 +230,7 @@ export default function Map3D({ height = "400px", className = "", vehicles = [],
       <MapContainer center={center} zoom={5} scrollWheelZoom={true} zoomControl={true} style={{ height: "100%", width: "100%", zIndex: 0 }}>
 
         {/* High-detail OpenStreetMap tiles */}
-        <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          maxZoom={19}
-        />
+        <BaseTiles layerId="streets" />
 
         <InitialFit vehicles={vehicles} />
         <FocusOnVehicle selected={selected} />

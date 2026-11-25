@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  MapContainer, TileLayer, Circle, useMap, CircleMarker, Popup, Tooltip,
+  MapContainer, Circle, useMap, CircleMarker, Popup, Tooltip,
 } from "react-leaflet";
+import BaseTiles from "@/components/map/BaseTiles";
 import { type PredictionResponse, type RiskZone } from "@/lib/api";
-import { BASE_LAYERS, LABELS_OVERLAY, getLayer, INDIA_BOUNDS, INDIA_CENTER } from "@/lib/mapTiles";
+import { BASE_LAYERS, INDIA_BOUNDS, INDIA_CENTER } from "@/lib/mapTiles";
 
 const SEV: Record<string, string> = {
   critical: "#ef4444", high: "#f97316", medium: "#eab308", low: "#10b981",
@@ -36,7 +37,6 @@ const glass = { background: "rgba(10,12,20,0.88)", backdropFilter: "blur(12px)" 
 
 export default function RiskZoneMap({ height = "420px", className = "", prediction = null, riskZones = [], selectedCity = "All India" }: RiskZoneMapProps) {
   const [layerId, setLayerId] = useState("dark");
-  const layer = getLayer(layerId);
 
   const cityName = CITY_ALIAS[selectedCity] ?? selectedCity;
   const focus = riskZones.find((z) => z.area === cityName);
@@ -121,11 +121,7 @@ export default function RiskZoneMap({ height = "420px", className = "", predicti
 
       <MapContainer center={center} zoom={zoom} minZoom={4} maxBounds={INDIA_BOUNDS} maxBoundsViscosity={0.8}
         scrollWheelZoom zoomControl style={{ height: "100%", width: "100%", zIndex: 0 }}>
-        <TileLayer key={layer.id} url={layer.url} attribution={layer.attribution} maxZoom={layer.maxZoom}
-          subdomains={layer.subdomains ?? "abc"} detectRetina={layer.id === "osm"} />
-        {layer.id === "satellite" && (
-          <TileLayer url={LABELS_OVERLAY.url} attribution={LABELS_OVERLAY.attribution} subdomains={LABELS_OVERLAY.subdomains} />
-        )}
+        <BaseTiles layerId={layerId} />
         <FlyTo center={center} zoom={zoom} />
 
         {visible.map((z) => {

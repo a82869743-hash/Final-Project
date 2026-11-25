@@ -2,8 +2,9 @@
 
 import { useEffect } from "react";
 import L from "leaflet";
-import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from "react-leaflet";
-import { getLayer, INDIA_BOUNDS } from "@/lib/mapTiles";
+import { MapContainer, Marker, Popup, Circle, Polyline, useMap } from "react-leaflet";
+import BaseTiles from "@/components/map/BaseTiles";
+import { INDIA_BOUNDS } from "@/lib/mapTiles";
 
 export interface EmergencyMapData {
   incident_location?: { latitude: number; longitude: number };
@@ -31,7 +32,6 @@ function AutoFit({ points }: { points: [number, number][] }) {
 }
 
 export default function VoiceResultMap({ data }: { data: EmergencyMapData }) {
-  const layer = getLayer("voyager");
   const inc = data.incident_location;
   const center: [number, number] = inc ? [inc.latitude, inc.longitude] : [22.5, 79];
   const ambs = data.all_nearby_ambulances ?? [];
@@ -46,7 +46,7 @@ export default function VoiceResultMap({ data }: { data: EmergencyMapData }) {
 
   return (
     <MapContainer center={center} zoom={11} maxBounds={INDIA_BOUNDS} scrollWheelZoom style={{ height: "100%", width: "100%", zIndex: 0 }}>
-      <TileLayer url={layer.url} attribution={layer.attribution} subdomains={layer.subdomains ?? "abc"} maxZoom={layer.maxZoom} />
+      <BaseTiles layerId="streets" />
       <AutoFit points={points} />
       <Circle center={center} radius={800} pathOptions={{ color: "#f59e0b", fillColor: "#f59e0b", fillOpacity: 0.15, weight: 2 }} />
       <Marker position={center} icon={makeIcon("#f59e0b", "!")}><Popup><b>Incident</b><br />{center[0].toFixed(4)}, {center[1].toFixed(4)}</Popup></Marker>

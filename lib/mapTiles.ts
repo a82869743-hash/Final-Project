@@ -1,10 +1,11 @@
 /**
- * Shared, key-free HD basemaps for every Leaflet map.
+ * Shared basemaps for every Leaflet map: all usable WITHOUT an API key.
  *
- * All providers below are free to use without an API key:
- *  - CARTO Voyager / Dark Matter: OSM-based, served at @2x for retina ("HD")
- *  - Esri World Imagery: high-resolution satellite imagery
- *  - OpenStreetMap standard: reference layer
+ * Checked Nov 2026:
+ *  - CARTO basemaps now return an "API KEY REQUIRED" watermark tile → not used
+ *  - tile.openstreetmap.org blocks apps outside its tile usage policy (HTTP 418) → not used
+ *  - Esri ArcGIS Online basemaps (street, dark canvas, imagery) work without a key
+ *  - OpenTopoMap works without a key
  */
 
 export interface BaseLayer {
@@ -14,51 +15,51 @@ export interface BaseLayer {
   attribution: string;
   maxZoom: number;
   subdomains?: string;
+  /** Optional transparent labels layer drawn on top */
+  overlay?: { url: string; attribution: string };
 }
 
-const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
 
 export const BASE_LAYERS: BaseLayer[] = [
   {
-    id: "voyager",
+    id: "streets",
     name: "Streets HD",
-    url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-    attribution: `${OSM_ATTR} &copy; <a href="https://carto.com/attributions">CARTO</a>`,
-    maxZoom: 20,
-    subdomains: "abcd",
+    url: `${ESRI}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`,
+    attribution: "Tiles &copy; Esri &mdash; HERE, Garmin, OpenStreetMap contributors",
+    maxZoom: 19,
   },
   {
     id: "dark",
     name: "Tactical Dark",
-    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    attribution: `${OSM_ATTR} &copy; <a href="https://carto.com/attributions">CARTO</a>`,
-    maxZoom: 20,
-    subdomains: "abcd",
+    url: `${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+    attribution: "Tiles &copy; Esri &mdash; HERE, Garmin, OpenStreetMap contributors",
+    maxZoom: 16,
+    overlay: { url: `${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, attribution: "&copy; Esri" },
   },
   {
     id: "satellite",
     name: "Satellite HD",
-    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    url: `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
     attribution: "Tiles &copy; Esri &mdash; Maxar, Earthstar Geographics",
     maxZoom: 19,
+    overlay: { url: `${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`, attribution: "&copy; Esri" },
   },
   {
-    id: "osm",
-    name: "OpenStreetMap",
-    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: OSM_ATTR,
-    maxZoom: 19,
+    id: "topo",
+    name: "Terrain",
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    attribution: 'Map data &copy; OpenStreetMap contributors, SRTM &mdash; &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
+    maxZoom: 17,
+    subdomains: "abc",
   },
 ];
 
-/** Labels-only overlay to put place names on top of satellite imagery. */
-export const LABELS_OVERLAY = {
-  url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png",
-  attribution: "&copy; CARTO",
-  subdomains: "abcd",
-};
+/** Legacy ids from earlier versions map onto the new layers */
+const ALIASES: Record<string, string> = { voyager: "streets", osm: "streets" };
 
-export const getLayer = (id: string) => BASE_LAYERS.find((l) => l.id === id) ?? BASE_LAYERS[0];
+export const getLayer = (id: string) =>
+  BASE_LAYERS.find((l) => l.id === (ALIASES[id] ?? id)) ?? BASE_LAYERS[0];
 
 /** India bounding box (with margin) so users cannot pan off to the Atlantic. */
 export const INDIA_BOUNDS: [[number, number], [number, number]] = [[4.5, 64.0], [38.5, 99.5]];

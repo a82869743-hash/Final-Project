@@ -3,9 +3,10 @@
 import { useEffect, useRef, useMemo } from "react";
 import L from "leaflet";
 import {
-  MapContainer, TileLayer, Marker, Popup, Circle, useMap,
+  MapContainer, Marker, Popup, Circle, useMap,
   Polyline, Tooltip, CircleMarker,
 } from "react-leaflet";
+import BaseTiles from "@/components/map/BaseTiles";
 import { type Vehicle, type PredictionResponse, type RiskZone } from "@/lib/api";
 import "leaflet.heat";
 
@@ -175,11 +176,7 @@ export default function TacticalMap({
       <MapContainer center={center} zoom={13} scrollWheelZoom zoomControl={false}
         style={{ height: "100%", width: "100%", zIndex: 0, background: "#0B0F19" }}>
         {/* Dark tactical tile layer */}
-        <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-          maxZoom={19}
-        />
+        <BaseTiles layerId="dark" />
 
         <FitBounds vehicles={vehicles} selected={selected} />
         <FocusSelected selected={selected} />

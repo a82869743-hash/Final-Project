@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useMemo } from "react";
 import L from "leaflet";
-import { MapContainer, TileLayer, Marker, Popup, Circle, useMap, Polyline, Tooltip, CircleMarker } from "react-leaflet";
+import { MapContainer, Marker, Popup, Circle, useMap, Polyline, Tooltip, CircleMarker } from "react-leaflet";
+import BaseTiles from "@/components/map/BaseTiles";
 import { type Vehicle, type PredictionResponse, type RiskZone } from "@/lib/api";
 import "leaflet.heat";
 import MarkerClusterGroup from "react-leaflet-cluster";
@@ -256,11 +257,7 @@ export default function Map({ height = "400px", className = "", vehicles = [], p
         zoom={13}
         style={{ height: "100%", width: "100%", zIndex: 0 }}
       >
-        <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          maxZoom={19}
-        />
+        <BaseTiles layerId="streets" />
 
         <RecenterMap center={center} />
         <FitBounds vehicles={vehicles} selected={selected} />

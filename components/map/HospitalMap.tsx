@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, useMap, Polyline } from "react-leaflet";
+import { MapContainer, CircleMarker, Popup, Tooltip, useMap, Polyline } from "react-leaflet";
+import BaseTiles from "@/components/map/BaseTiles";
 import type { Hospital, HospitalRecommendation } from "@/lib/api";
-import { BASE_LAYERS, getLayer, INDIA_BOUNDS, INDIA_CENTER } from "@/lib/mapTiles";
+import { BASE_LAYERS, INDIA_BOUNDS, INDIA_CENTER } from "@/lib/mapTiles";
 
 const COLORS = { normal: "#16a34a", moderate: "#0284c7", high: "#d97706", critical: "#dc2626" } as const;
 
@@ -22,8 +23,7 @@ interface Props {
 }
 
 export default function HospitalMap({ hospitals, selectedId, onSelect, recommendations = [], height = "380px" }: Props) {
-  const [layerId, setLayerId] = useState("voyager");
-  const layer = getLayer(layerId);
+  const [layerId, setLayerId] = useState("streets");
   const sel = hospitals.find((h) => h.id === selectedId) ?? null;
 
   return (
@@ -44,7 +44,7 @@ export default function HospitalMap({ hospitals, selectedId, onSelect, recommend
       </div>
       <MapContainer center={INDIA_CENTER} zoom={5} minZoom={4} maxBounds={INDIA_BOUNDS} maxBoundsViscosity={0.8}
         scrollWheelZoom style={{ height: "100%", width: "100%" }}>
-        <TileLayer key={layer.id} url={layer.url} attribution={layer.attribution} maxZoom={layer.maxZoom} subdomains={layer.subdomains ?? "abc"} />
+        <BaseTiles layerId={layerId} />
         <FocusOn target={sel ? [sel.lat, sel.lng] : null} />
         {sel && recommendations.map((r) => (
           <Polyline key={`l-${r.id}`} positions={[[sel.lat, sel.lng], [r.lat, r.lng]]} pathOptions={{ color: "#00677f", weight: 2, dashArray: "4 6" }} />

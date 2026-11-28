@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Bot, X, Send, Mic, Loader2 } from "lucide-react";
+import { Bot, X, Send, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 
 interface Message {
@@ -12,59 +12,80 @@ interface Message {
   severity?: string;
 }
 
-// ── Aegis Tactical system prompt for context-aware responses ──
-const AEGIS_SYSTEM_CONTEXT = `You are Aegis Tactical AI Assistant, the intelligent emergency response and dispatch assistant integrated into the Aegis Tactical platform.
+const CITY_ALIASES: Record<string, string> = {
+  bangalore: "Bengaluru", bombay: "Mumbai", calcutta: "Kolkata", madras: "Chennai", gurgaon: "Delhi",
+  noida: "Delhi", "new delhi": "Delhi", trivandrum: "Thiruvananthapuram", vizag: "Visakhapatnam",
+  allahabad: "Prayagraj", cochin: "Kochi", baroda: "Vadodara", calicut: "Kozhikode",
+};
+const SUBSYSTEM_NAMES: Record<string, string> = {
+  fastapi: "FastAPI backend", ml_model: "ML risk engine", supabase: "Database", whisper: "Whisper transcription",
+  weather: "Live weather feed",
+};
 
-PRIMARY ROLE:
-Act as a smart emergency operations assistant for demonstrations and system interaction. You assist dispatchers, emergency coordinators, and users with emergency analytics, predictions, tracking, and operational decisions.
+function findCity(lower: string, names: string[]): string | null {
+  for (const [alias, name] of Object.entries(CITY_ALIASES)) if (lower.includes(alias)) return name;
+  return names.find((n) => lower.includes(n.toLowerCase())) ?? null;
+}
 
-CAPABILITIES:
-- Emergency dispatch coordination
-- Real-time fleet tracking & vehicle status queries
-- AI-powered accident risk prediction (XGBoost ML model)
-- Voice command processing & intent detection
-- Video intelligence for accident analysis (YOLOv8)
-- Hospital & ambulance proximity lookup (from real CSV datasets)
-- Region-wise risk zone analysis across Indian cities
+/** Answers backed by live backend data (status, weather, risk, fleet, planning). */
+async function getLiveResponse(text: string): Promise<string | null> {
+  const lower = text.toLowerCase().trim();
 
-CURRENT SYSTEM ARCHITECTURE:
-- Backend: FastAPI (Python) at port 8000
-- Frontend: Next.js 14 (TypeScript) at port 3000
-- ML: XGBoost model for risk prediction
-- Video AI: YOLOv8 for accident detection
-- Database: Supabase (PostgreSQL)
-- Maps: Leaflet with OpenStreetMap
-- Voice: Browser Speech API + Whisper fallback
-- Geocoding: OpenStreetMap Nominatim
+  if (/\b(status|health|online|systems?)\b/.test(lower) && !lower.includes("ambulance status")) {
+    const h = await api.health();
+    const rows = Object.entries(h as unknown as Record<string, { status: string; latency: string; optional?: boolean }>);
+    const core = rows.filter(([, v]) => !v.optional);
+    const ok = core.every(([, v]) => v.status === "online");
+    return `${ok ? "✅ All core systems online." : "⚠️ Some core systems need attention."}\n\n` +
+      rows.map(([k, v]) => `• ${SUBSYSTEM_NAMES[k] ?? k} — ${v.status}${v.latency ? ` (${v.latency})` : ""}${v.optional ? " · optional" : ""}`).join("\n");
+  }
 
-RESPONSE RULES:
-- Stay within Aegis Tactical scope
-- Provide actionable, data-driven responses
-- Reference real system capabilities
-- If asked about unrelated topics, respond: "I am configured specifically for Aegis Tactical emergency response operations."`;
+  const wantsWeather = /\b(weather|temperature|rain|fog|forecast)\b/.test(lower);
+  const wantsRisk = /\b(risk|danger|dangerous|safe|unsafe|hotspot)/.test(lower);
+  if (wantsWeather || wantsRisk) {
+    const r = await api.getRiskNow();
+    const city = findCity(lower, r.cities.map((c) => c.city));
+    const c = city ? r.cities.find((x) => x.city === city) : null;
+    if (c) {
+      const wx = c.temperature_c != null ? `${Math.round(c.temperature_c)}°C, ${c.description ?? c.weather_label}` : c.weather_label;
+      return `📍 ${c.city} — ${String(r.hour_ist).padStart(2, "0")}:00 IST\n\n` +
+        `🌤 Weather: ${wx}${r.weather_live ? " (live, Open-Meteo)" : " (live feed offline)"}\n` +
+        `⚠️ Risk: ${c.risk_level} — ${Math.round(c.percentile)}th percentile of Indian city-hours\n` +
+        `🚑 Expected accidents next hour: ${c.expected_accidents_next_hour.toFixed(2)}\n` +
+        `☠️ Expected deaths/hour: ${c.expected_deaths_per_hour.toFixed(3)}\n\n` +
+        "Source: MoRTH/NCRB city statistics + XGBoost severity model. See Risk AI for a full breakdown.";
+    }
+    const top = r.cities.slice(0, 5).map((x, i) => `${i + 1}. ${x.city} — ${x.risk_level} (P${Math.round(x.percentile)}) · ${x.weather_label}`).join("\n");
+    return `Highest-risk cities right now (${String(r.hour_ist).padStart(2, "0")}:00 IST, ${r.weather_live ? "live weather" : "weather offline"}):\n\n${top}\n\n` +
+      `${r.counts.High} high · ${r.counts.Medium} medium · ${r.counts.Low} low across ${r.cities.length} cities.\nAsk e.g. "risk in Pune" for one city.`;
+  }
+
+  if (/\b(plan|pre-?position|reposition|relocat|where should)/.test(lower)) {
+    const p = await api.getFleetPlan(6);
+    const moves = p.moves.slice(0, 5).map((m) => `• ${m.units}× ${m.from} → ${m.to} (${m.distance_km} km, ~${m.drive_min} min)`).join("\n");
+    return `🗺 Fleet plan for the next 6 h\n\nExpected accidents: ${p.expected_accidents_total.toFixed(1)} across 53 cities\n` +
+      `Demand coverage: ${Math.round(p.coverage_now * 100)}% → ${Math.round(p.coverage_after * 100)}% after plan\n\n` +
+      (moves || "No reachable relocation improves coverage right now.") +
+      (p.unmet_cities.length ? `\n\nOut of reach: ${p.unmet_cities.slice(0, 5).join(", ")}` : "") +
+      "\n\nOpen Fleet Planner to dispatch these moves.";
+  }
+
+  if (/\b(fleet|vehicles?|ambulances?)\b/.test(lower) && !/\b(near|nearest|closest|send|need)\b/.test(lower)) {
+    const v = await api.getVehicles();
+    const count = (st: string) => v.filter((x) => x.status === st).length;
+    return `🚑 Live fleet — ${v.length} units\n\n• Available: ${count("available")}\n• En route: ${count("en_route")}\n` +
+      `• On scene: ${count("on_scene")}\n• Critical: ${count("critical")}\n• Offline: ${count("offline")}\n\nSee Tracking for live positions.`;
+  }
+  return null;
+}
 
 // ── Quick response patterns for common queries ──
 function getQuickResponse(text: string): string | null {
   const lower = text.toLowerCase().trim();
 
-  // System status
-  if (lower.includes("status") || lower.includes("online") || lower.includes("health")) {
-    return "All Aegis Tactical subsystems are operational:\n• FastAPI backend — Online\n• ML Risk Predictor (XGBoost) — Active\n• Video AI (YOLOv8) — Standing by\n• Supabase DB — Connected\n• Vehicle WebSocket — Streaming\n\nAll critical services running within normal parameters.";
-  }
-
   // Help / what can you do
   if (lower === "help" || lower.includes("what can you do") || lower.includes("capabilities")) {
-    return "I can help you with:\n\n🚨 Emergency Dispatch — \"Report accident near Andheri\"\n🚑 Locate Resources — \"Find nearest ambulance\"\n📊 Risk Analysis — \"What's the risk level in Delhi?\"\n🗺️ Fleet Tracking — \"Show vehicle status\"\n🎥 Video Intel — \"Analyze accident footage\"\n🎙️ Voice Commands — Use the Voice tab\n\nJust type your query and I'll route it through the appropriate system.";
-  }
-
-  // Fleet/vehicles
-  if (lower.includes("fleet") || lower.includes("vehicle") || lower.includes("ambulance status")) {
-    return "Fleet status is available on the Tracking page. The system monitors all vehicles via WebSocket with:\n• Real-time GPS positioning\n• Status indicators (Available/En Route/On Scene/Critical)\n• Speed & heading data\n• Driver assignment\n• Click any vehicle marker to see its full ID and details.";
-  }
-
-  // Risk prediction
-  if (lower.includes("risk") && (lower.includes("predict") || lower.includes("forecast") || lower.includes("zone"))) {
-    return "The AI Risk Predictor uses an XGBoost model trained on historical accident data. You can:\n\n1. Dashboard → Use the 'Predictive ML Forecast' slider to see risk levels from NOW to +12 hours\n2. Region Filter → Select any Indian city to see localized risk zones\n3. Map → Colored dots show severity: 🔴 Critical | 🟠 High | 🟡 Medium | 🟢 Low\n\nThe model factors in: hour, day, traffic density, weather, population, and historical incidents.";
+    return "I can help you with:\n\n🚨 Emergency Dispatch — \"Report accident near Andheri\"\n🚑 Locate Resources — \"Find nearest ambulance\"\n📊 Risk Analysis — \"What's the risk level in Delhi?\"\n🗺️ Fleet Tracking — \"Show fleet\"\n🌦 Live weather & risk — \"Risk in Mumbai\"\n📦 Pre-positioning — \"Where should ambulances go?\"\n🎥 Video Intel — \"Analyze accident footage\"\n🎙️ Voice Commands — Use the Voice tab\n\nJust type your query and I'll route it through the appropriate system.";
   }
 
   // Video intelligence
@@ -73,8 +94,8 @@ function getQuickResponse(text: string): string | null {
   }
 
   // Scope check
-  if (lower.includes("weather") || lower.includes("news") || lower.includes("stock") || 
-      lower.includes("joke") || lower.includes("recipe") || lower.includes("game")) {
+  if (lower.includes("news") || lower.includes("stock") || lower.includes("joke") ||
+      lower.includes("recipe") || lower.includes("game")) {
     return "I am configured specifically for Aegis Tactical emergency response operations. I cannot assist with queries outside this scope.";
   }
 
@@ -106,11 +127,9 @@ export default function AegisCopilot() {
     setIsTyping(true);
 
     try {
-      // Check for quick local responses first
-      const quickReply = getQuickResponse(userText);
+      // Live data answers first, then static help, then intent routing
+      const quickReply = (await getLiveResponse(userText).catch(() => null)) ?? getQuickResponse(userText);
       if (quickReply) {
-        // Simulate slight delay for realism
-        await new Promise(r => setTimeout(r, 400));
         setMessages(prev => [...prev, { 
           id: `msg-${Date.now()}`, sender: "aegis", text: quickReply 
         }]);
@@ -197,7 +216,7 @@ export default function AegisCopilot() {
         <button
           onClick={() => setIsOpen(!isOpen)}
           className={`relative p-4 rounded-full shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all duration-300 ${
-            isOpen ? "bg-[var(--color-surface-container)] text-[var(--color-on-surface)] rotate-90 scale-90" : "bg-cyan-600 text-white hover:bg-cyan-500 hover:scale-105"
+            isOpen ? "bg-[var(--color-surface-container-low)] text-[var(--color-on-surface)] rotate-90 scale-90" : "bg-cyan-600 text-white hover:bg-cyan-500 hover:scale-105"
           }`}
         >
           {isOpen ? <X className="h-6 w-6" /> : <Bot className="h-6 w-6" />}
@@ -206,7 +225,7 @@ export default function AegisCopilot() {
 
       {/* Chat Window */}
       {isOpen && (
-        <div className="fixed bottom-24 right-6 z-50 w-[380px] h-[500px] bg-[var(--color-surface)]/95 backdrop-blur-2xl rounded-[var(--radius-lg)] shadow-[0_10px_40px_rgba(0,0,0,0.2)] flex flex-col overflow-hidden border border-[var(--color-outline-variant)] animate-fade-in">
+        <div className="fixed bottom-24 z-50 w-[min(380px,calc(100vw-2rem))] h-[min(520px,calc(100vh-8rem))] right-4 sm:right-6 bg-[var(--color-surface)]/95 backdrop-blur-2xl rounded-[var(--radius-lg)] shadow-[0_10px_40px_rgba(0,0,0,0.2)] flex flex-col overflow-hidden border border-[var(--color-outline-variant)] animate-fade-in">
           
           {/* Header */}
           <div className="px-4 py-3 border-b border-[var(--color-outline-variant)] flex items-center gap-3 bg-[var(--color-surface-container-high)]">
@@ -234,10 +253,10 @@ export default function AegisCopilot() {
                     msg.sender === "user" 
                       ? "bg-cyan-600 text-white border border-cyan-500" 
                       : msg.isAction && msg.severity === "critical"
-                      ? "bg-red-950/40 text-red-200 border border-red-800/50 font-medium"
+                      ? "bg-red-50 text-red-900 border border-red-200 font-medium"
                       : msg.isAction && msg.severity === "warning"
-                      ? "bg-amber-950/30 text-amber-200 border border-amber-800/40"
-                      : "bg-[var(--color-surface-container)] text-[var(--color-on-surface)] border border-[var(--color-outline-variant)]"
+                      ? "bg-amber-50 text-amber-900 border border-amber-200"
+                      : "bg-[var(--color-surface-container-low)] text-[var(--color-on-surface)] border border-[var(--color-outline-variant)]"
                   }`}
                   style={{ whiteSpace: "pre-line" }}
                 >
@@ -247,7 +266,7 @@ export default function AegisCopilot() {
             ))}
             {isTyping && (
               <div className="flex justify-start">
-                <div className="bg-[var(--color-surface-container)] rounded-[var(--radius-md)] p-3 border border-[var(--color-outline-variant)] flex items-center gap-2">
+                <div className="bg-[var(--color-surface-container-low)] rounded-[var(--radius-md)] p-3 border border-[var(--color-outline-variant)] flex items-center gap-2">
                   <Loader2 className="h-3.5 w-3.5 text-cyan-500 animate-spin" />
                   <span className="text-[11px] text-[var(--color-on-surface-muted)]">Processing...</span>
                 </div>
@@ -284,7 +303,7 @@ export default function AegisCopilot() {
   );
 }
 
-function BrainCircuitIcon(props: any) {
+function BrainCircuitIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
       {...props}

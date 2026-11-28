@@ -15,8 +15,9 @@ import {
   ToggleLeft,
   ToggleRight,
   Save,
+  CloudSun,
 } from "lucide-react";
-import { api, API_BASE, WS_BASE, type HealthStatus } from "@/lib/api";
+import { api, API_BASE, WS_BASE } from "@/lib/api";
 import { useToast } from "@/components/ui/Toast";
 
 interface ServiceStatus {
@@ -136,22 +137,31 @@ export default function SettingsPage() {
         status: health?.ml_model?.status || "offline",
         latency: health?.ml_model?.latency || "—",
       },
-      // Whisper API
+      // Whisper API (optional: live voice uses browser speech recognition)
       {
         name: "Whisper API", icon: Mic,
-        description: health?.whisper?.status === "degraded" ? "Running in mock mode" : "Audio transcription",
+        description: health?.whisper?.status === "online" ? "Audio file transcription" : "Optional — needs OPENAI_API_KEY",
         status: health?.whisper?.status || "offline",
         latency: health?.whisper?.latency || "—",
+      },
+      // Live weather (Open-Meteo) feeding the risk engine and fleet planner
+      {
+        name: "Live Weather", icon: CloudSun,
+        description: "Open-Meteo feed for risk & fleet planning",
+        status: health?.weather?.status || "offline",
+        latency: health?.weather?.latency || "—",
       },
     ]);
 
     setChecking(false);
 
-    const onlineCount = [ping.ok, health?.supabase?.status === "online", wsOk, health?.ml_model?.status === "online", health?.whisper?.status === "online"]
-      .filter(Boolean).length;
+    // Core services decide overall health; optional ones are reported separately
+    const core = [ping.ok, health?.supabase?.status === "online", wsOk, health?.ml_model?.status === "online"];
+    const coreOnline = core.filter(Boolean).length;
+    const optionalOnline = [health?.whisper?.status === "online", health?.weather?.status === "online"].filter(Boolean).length;
     showToast(
-      `Health check complete — ${onlineCount}/5 services online`,
-      onlineCount === 5 ? "success" : onlineCount > 0 ? "warning" : "error"
+      `Health check complete — ${coreOnline}/${core.length} core services online · ${optionalOnline}/2 optional`,
+      coreOnline === core.length ? "success" : coreOnline > 0 ? "warning" : "error"
     );
   }, [showToast]);
 

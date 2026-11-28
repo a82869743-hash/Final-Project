@@ -38,7 +38,8 @@ def _hour(time_str: Optional[str]) -> Optional[int]:
         return None
     try:
         from datetime import datetime
-        return datetime.fromisoformat(time_str.replace("Z", "+00:00")).hour
+        from services.clock import to_ist
+        return to_ist(datetime.fromisoformat(time_str.replace("Z", "+00:00"))).hour
     except Exception:
         try:
             return int(time_str.split(":")[0])
@@ -130,8 +131,8 @@ async def india_stats():
 @router.get("/risk-forecast")
 async def risk_forecast(lat: float, lng: float, hours: int = 12, weather: int = 0):
     """Real-data risk for the next N hours at a location."""
-    from datetime import datetime
-    now = datetime.now().hour
+    from services.clock import now_ist
+    now = now_ist().hour
     out = []
     for h in range(max(1, min(hours, 24))):
         hr = (now + h) % 24

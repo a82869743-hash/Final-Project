@@ -164,7 +164,7 @@ function HeatmapLayer({ vehicles, prediction }: { vehicles: Vehicle[]; predictio
             0.8: "red"
           }
         }).addTo(map);
-      } catch (e) {
+      } catch {
         console.warn("Heat layer deferred — container not ready yet");
       }
     }
@@ -351,7 +351,7 @@ export default function Map({ height = "400px", className = "", vehicles = [], p
         <MarkerClusterGroup 
           chunkedLoading 
           maxClusterRadius={60}
-          iconCreateFunction={(cluster: any) => {
+          iconCreateFunction={(cluster: { getChildCount: () => number }) => {
             const count = cluster.getChildCount();
             // Scale radar pulse size slightly based on density
             const size = Math.min(40 + (count * 1.5), 70);

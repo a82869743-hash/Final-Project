@@ -10,6 +10,7 @@ Nothing in the training data is randomly generated.
 | [`backend/ml/real_data/uk_stats19_2023_model_features.csv.gz`](backend/ml/real_data/uk_stats19_2023_model_features.csv.gz) | 104,258 × 21 | Record-level police collision data used to train the **severity model** |
 | [`backend/ml/real_model_metadata.json`](backend/ml/real_model_metadata.json) | — | Model card: metrics, feature importances, per-city profiles, weather factors |
 | [`backend/ml/risk_zones.json`](backend/ml/risk_zones.json) | 53 zones | Map layer generated from the master dataset |
+| [`backend/ml/demand_model.json`](backend/ml/demand_model.json) | 53 cities | **Demand model**: per-city 2023 totals and shrunk month / time-of-day profiles, with validation metrics (built by `ml/demand_pipeline.py`) |
 | `backend/ml/real_data/raw/*.csv` | — | Untouched copies of the source tables (see [sources](#sources)) |
 
 Rebuild everything from the raw files with:
@@ -30,6 +31,8 @@ cd backend && python ml/real_pipeline.py
 | *Road Accidents in India 2018*, state-wise accidents/killed by weather; national time-of-day | MoRTH | Weather fatality multipliers; fallback time profile |
 | *Accidental Deaths & Suicides in India (ADSI)*, Table 1A.2, state/UT/city traffic accidents | National Crime Records Bureau (NCRB) | Cross-check of city cases / injured / died |
 | ADSI 2020, cause-wise distribution of road accidents by state/city | NCRB | Over-speeding / careless / drunk-driving / visibility shares |
+| ADSI 2023, state and city monthly road accidents | NCRB | 2023 city volumes and post-COVID seasonality for the demand model |
+| Open-Meteo forecast API (live, no key) | open-meteo.com | Current weather and 48 h hourly forecast for the 53 cities, mapped to MoRTH weather classes |
 | *STATS19 road safety data 2023*, collision file | UK Department for Transport (Open Government Licence v3.0) | Record-level training data for the severity model |
 
 **Why UK records?** India does not publish geocoded, per-crash records. MoRTH and NCRB publish
@@ -199,3 +202,40 @@ chance level. Both were deleted together with that data.
 | Ambulance positions / movement | No public live GPS feed. Units are stationed at real hospitals and drive toward real incidents |
 | Hospital bed occupancy | No national real-time bed API. Hospitals, locations and bed totals are real; occupancy is a time-driven simulation (replace `_tick()` in `services/hospital_registry.py` with an HMIS feed) |
 | Live incident alerts | Generated in proportion to each city's real MoRTH 2022 accident count |
+
+
+## Demand model: `demand_model.json` (`ml/demand_pipeline.py`)
+
+Forecasts expected road accidents per city for any hour, for the **Fleet Planner**:
+
+```
+accidents(city, hour) = accidents_2023 / 365  ×  12 · month_share[month]  ×  slot_share[slot] · 8 / 24
+deaths(city, hour)    = accidents(city, hour) × fatality_rate_2022 × weather_multiplier(forecast weather)
+```
+
+| Input | Source |
+|---|---|
+| `accidents_2023`, monthly counts | NCRB ADSI 2023 city table (53 cities, 69,910 accidents) |
+| `slot_share` | MoRTH 2020 city time-of-day counts |
+| `fatality_rate_2022` | MoRTH 2022 deaths ÷ accidents |
+| `weather_multiplier` | MoRTH 2018 deaths per 100 accidents by weather ÷ clear; live class from Open-Meteo |
+
+**What is learned.** Small cities' monthly and hourly shares are noisy, so each profile is shrunk toward a
+prior with an empirical-Bayes Dirichlet–multinomial estimate, `share = (count + k·prior) / (total + k)`.
+For months the prior is the city's state 2023 profile; for time of day it is the national MoRTH 2018 profile.
+The pseudo-count `k` is chosen by **Poisson-thinning cross-validation**: each city's counts are randomly split
+50/50, the profile is fitted on one half and scored (held-out multinomial log-likelihood) on the other,
+40 repeats. A profile is only deployed if it beats the raw city profile on held-out counts.
+
+| Profile | Best k | Held-out perplexity: raw city | prior only | **shrunk** |
+|---|---|---|---|---|
+| Month (prior: state 2023) | 1280 | 12.037 | 11.984 | **11.962** |
+| Time of day (prior: national 2018) | 40 | 7.228 | 7.547 | **7.206** |
+
+Both shrunk profiles beat the raw city data and the prior alone, so both are deployed. The gains are
+small because the signal is mostly in volume, not shape. The model does not claim more than that.
+
+**Fleet planner.** Available ambulances are apportioned to cities in proportion to expected accidents over the
+horizon (largest-remainder method). Relocations pair surplus and deficit cities shortest-first and are capped at
+drives under 4 h (55 km/h). Cities that no unit can reach in time are reported as *unmet demand*, which in
+practice flags cities with no ambulance base in the registry (e.g. most of Kerala).

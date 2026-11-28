@@ -136,7 +136,9 @@ def _tick():
     if steps <= 0:
         return
     _last_tick = now
-    hour = datetime.now().hour + datetime.now().minute / 60
+    from services.clock import now_ist
+    _n = now_ist()
+    hour = _n.hour + _n.minute / 60
     load = _diurnal(hour)
     for _ in range(steps):
         tot_occ = tot_cap = 0

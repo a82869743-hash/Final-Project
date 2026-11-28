@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BrainCircuit, MapPin, CloudFog, Clock, Gauge, Users, Car, Footprints, ArrowUpRight, ArrowDownRight,
-  Minus, Loader2, Database, ShieldCheck, Info,
+  Minus, Loader2, Database, ShieldCheck, Info, Radio,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell,
@@ -51,6 +51,27 @@ export default function RiskPage() {
   const [card, setCard] = useState<ModelCard | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveNote, setLiveNote] = useState<string | null>(null);
+
+  // Snap the scenario to what is happening right now: IST hour + live weather in this city
+  const applyLiveConditions = async () => {
+    if (!zone) return;
+    setLiveLoading(true);
+    try {
+      const w = await api.getWeatherNearest(zone.lat, zone.lng);
+      const h = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: "Asia/Kolkata" }).format(new Date())) % 24;
+      setHour(h);
+      setWeather(w.weather_class ?? 0);
+      setLiveNote(w.live
+        ? `Live: ${String(h).padStart(2, "0")}:00 IST · ${w.temperature_c != null ? `${Math.round(w.temperature_c)}°C, ` : ""}${w.description} in ${w.city}`
+        : `${String(h).padStart(2, "0")}:00 IST · live weather unavailable, using clear`);
+    } catch {
+      setLiveNote("Could not fetch live conditions");
+    } finally {
+      setLiveLoading(false);
+    }
+  };
 
   useEffect(() => {
     api.getRiskZones().then((r) => setZones(r.zones)).catch(() => setError("Backend unreachable"));
@@ -108,10 +129,18 @@ export default function RiskPage() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         {/* Inputs */}
         <div className="card-lifted p-5 space-y-4">
-          <h3 className="font-[var(--font-display)] text-[13px] font-bold">Scenario</h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-[var(--font-display)] text-[13px] font-bold">Scenario</h3>
+            <button onClick={applyLiveConditions} disabled={!zone || liveLoading}
+              className="flex items-center gap-1.5 rounded-md bg-[var(--color-primary)]/8 px-2.5 py-1.5 text-[10px] font-bold text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary)]/15 disabled:opacity-50">
+              {liveLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Radio className="h-3 w-3" />}
+              Use live conditions
+            </button>
+          </div>
+          {liveNote && <p className="-mt-2 text-[10px] text-[var(--color-on-surface-muted)]">{liveNote}</p>}
           <div>
             <Label><MapPin className="inline h-3 w-3 mr-1" />City (53 MoRTH million-plus cities)</Label>
-            <select value={city} onChange={(e) => setCity(e.target.value)} className="mt-1 w-full text-[12px] bg-[var(--color-surface-container-low)] rounded-md px-2 py-2 outline-none">
+            <select value={city} onChange={(e) => { setCity(e.target.value); setLiveNote(null); }} className="mt-1 w-full text-[12px] bg-[var(--color-surface-container-low)] rounded-md px-2 py-2 outline-none">
               {cityOptions.map((z) => <option key={z.area} value={z.area}>{z.area} · {z.state}</option>)}
             </select>
           </div>

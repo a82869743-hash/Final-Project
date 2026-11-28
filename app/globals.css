@@ -168,3 +168,77 @@ select option {
   background-color: #ffffff;
   color: #1e293b;
 }
+
+/* ───────────── Polish layer (uses existing tokens only) ───────────── */
+
+/* Keyboard focus: visible, on-brand, never on mouse click */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
+
+::selection {
+  background: var(--color-primary-muted);
+  color: var(--color-on-surface);
+}
+
+/* Numbers in KPIs and tables don't jitter as they update */
+.font-\[var\(--font-display\)\] { font-variant-numeric: tabular-nums; }
+
+/* Cards: gentle lift on hover */
+.card-lifted {
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.card-lifted:hover {
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.05);
+}
+
+/* Map chrome: match the app's type and radius */
+.leaflet-container { font-family: var(--font-body); }
+.leaflet-tooltip {
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.10);
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--color-on-surface);
+}
+.leaflet-popup-content-wrapper {
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
+}
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12) !important;
+  border-radius: 8px !important;
+  overflow: hidden;
+}
+.leaflet-control-zoom a {
+  color: var(--color-on-surface) !important;
+  transition: background-color 0.15s ease;
+}
+.leaflet-control-attribution {
+  border-top-left-radius: 6px;
+  font-size: 9px !important;
+  backdrop-filter: blur(6px);
+}
+
+/* Inputs: consistent soft focus */
+input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):focus,
+select:focus,
+textarea:focus {
+  border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+/* Respect users who prefer less motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

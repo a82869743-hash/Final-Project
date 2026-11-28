@@ -59,6 +59,7 @@ from routes.voice_intent import router as voice_intent_router
 from routes.emergency import router as emergency_router
 from routes.text_intent import router as text_intent_router
 from routes.hospitals import router as hospitals_router
+from routes.live import router as live_router
 
 # ── Video Intelligence: routes always on; ENABLE_VIDEO_AI only toggles the
 #    heavy YOLO model (the OpenCV detector works without it) ──
@@ -118,6 +119,7 @@ app.include_router(voice_intent_router, prefix="/api", tags=["Voice Intent"])
 app.include_router(emergency_router, prefix="/api", tags=["Emergency"])
 app.include_router(text_intent_router, prefix="/api", tags=["Text Intent"])
 app.include_router(hospitals_router, prefix="/api", tags=["Hospitals"])
+app.include_router(live_router, prefix="/api", tags=["Live Conditions & Fleet Planning"])
 
 # ── NEW: Video Intelligence routers (fail-safe) ──
 if video_router is not None:

@@ -53,6 +53,16 @@ async def health_check():
     if openai_key:
         status["whisper"] = {"status": "online", "latency": "Ready"}
     else:
-        status["whisper"] = {"status": "degraded", "latency": "Mock mode"}
+        # Optional: live voice uses browser speech recognition; Whisper only adds file transcription
+        status["whisper"] = {"status": "degraded", "latency": "Optional — browser speech in use", "optional": True}
+
+    # Live weather feed (Open-Meteo) used by the risk engine and fleet planner — optional
+    try:
+        from services import weather
+        snap = weather.snapshot()
+        status["weather"] = ({"status": "online", "latency": "Open-Meteo live"} if snap["live"]
+                             else {"status": "degraded", "latency": "Offline — clear-sky defaults", "optional": True})
+    except Exception as e:
+        status["weather"] = {"status": "degraded", "latency": f"Error: {str(e)[:40]}", "optional": True}
 
     return status

@@ -33,6 +33,19 @@ const severityColors: Record<string, string> = {
   low: "var(--color-success)",
 };
 
+/** Minimal Web Speech API typing (not in the TS DOM lib) */
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((e: { results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
 export default function AnalyzerPage() {
   const [file, setFile] = useState<File | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -46,9 +59,7 @@ export default function AnalyzerPage() {
   const [transcript, setTranscript] = useState<string | null>(null);
   const [streamText, setStreamText] = useState("");
   const [recordingStatus, setRecordingStatus] = useState<string>("");
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<BlobPart[]>([]);
-  const streamIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
   // Intelligence results
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -89,8 +100,8 @@ export default function AnalyzerPage() {
         setParsedData(res.parsed || null);
         setSirenResult(res.siren || null);
       }
-    } catch (err: any) {
-      const msg = err?.message || "";
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
       if (msg.includes("429") || msg.includes("quota")) {
         setError("OpenAI API quota exceeded. Use the Voice Command page for free browser-based speech recognition.");
       } else {
@@ -120,8 +131,8 @@ export default function AnalyzerPage() {
       } else {
         setResult(res || null);
       }
-    } catch (err: any) {
-      const msg = err?.message || "";
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
       if (msg.includes("429") || msg.includes("quota")) {
         setError("OpenAI API quota exceeded. Use the Voice Command page instead.");
       } else {
@@ -135,7 +146,8 @@ export default function AnalyzerPage() {
   // ── Live Recording with Browser Speech API ──
   const startRecording = useCallback(async () => {
     try {
-      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const w = window as unknown as { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor };
+      const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
       if (!SR) {
         setError("Speech Recognition not supported. Use Chrome or Edge.");
         return;
@@ -151,14 +163,14 @@ export default function AnalyzerPage() {
       setResult(null);
 
       const recognition = new SR();
-      recognition.lang = "en-US";
+      recognition.lang = "en-IN";
       recognition.continuous = true;
       recognition.interimResults = true;
-      (window as any).__recognition = recognition;
+      recognitionRef.current = recognition;
 
       let finalText = "";
 
-      recognition.onresult = (event: any) => {
+      recognition.onresult = (event) => {
         let interim = "";
         for (let i = 0; i < event.results.length; i++) {
           if (event.results[i].isFinal) {
@@ -172,13 +184,15 @@ export default function AnalyzerPage() {
         setRecordingStatus("Detecting...");
       };
 
-      recognition.onerror = (event: any) => {
+      recognition.onerror = (event) => {
         if (event.error !== "aborted" && event.error !== "no-speech") {
           console.warn("Speech error:", event.error);
         }
       };
 
       recognition.onend = () => {
+        recognitionRef.current = null;
+        setIsRecording(false);
         // Process final text when recognition ends
         const text = finalText.trim();
         if (text && !analyzing) {
@@ -211,9 +225,9 @@ export default function AnalyzerPage() {
 
       // Auto-stop after 10 seconds
       setTimeout(() => {
-        if ((window as any).__recognition) {
-          (window as any).__recognition.stop();
-          (window as any).__recognition = null;
+        if (recognitionRef.current) {
+          recognitionRef.current.stop();
+          recognitionRef.current = null;
           setIsRecording(false);
         }
       }, 10000);
@@ -224,9 +238,9 @@ export default function AnalyzerPage() {
   }, [analyzing]);
 
   function stopRecording() {
-    if ((window as any).__recognition) {
-      (window as any).__recognition.stop();
-      (window as any).__recognition = null;
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
     }
     setIsRecording(false);
   }

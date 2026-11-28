@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from services.data_store import get_vehicles, simulate_vehicle_movement
+from services.data_store import get_vehicles, tick_simulation
 from db import upsert_vehicle, insert_vehicle_history
 
 router = APIRouter()
@@ -36,8 +36,11 @@ async def websocket_endpoint(ws: WebSocket):
 
     try:
         while True:
+            # The reader task ends when the client goes away: stop streaming cleanly
+            if reader_task.done():
+                raise WebSocketDisconnect()
             # Simulate movement
-            simulate_vehicle_movement()
+            tick_simulation()
 
             # Send updated positions
             vehicles = get_vehicles()
@@ -73,11 +76,16 @@ async def websocket_endpoint(ws: WebSocket):
 
             await asyncio.sleep(2)
     except WebSocketDisconnect:
-        reader_task.cancel()
-        _connections.remove(ws)
-        print(f"[DISCONNECTED] WebSocket client disconnected ({len(_connections)} remaining)")
+        print(f"[DISCONNECTED] WebSocket client disconnected ({len(_connections) - 1} remaining)")
+    except RuntimeError as e:
+        # Sending after the client closed: a normal disconnect race, not an error
+        if "websocket.close" in str(e) or "already completed" in str(e):
+            print(f"[DISCONNECTED] WebSocket client closed ({len(_connections) - 1} remaining)")
+        else:
+            print(f"[ERROR] WebSocket error: {e}")
     except Exception as e:
+        print(f"[ERROR] WebSocket error: {e}")
+    finally:
         reader_task.cancel()
         if ws in _connections:
             _connections.remove(ws)
-        print(f"[ERROR] WebSocket error: {e}")

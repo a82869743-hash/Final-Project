@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Wifi, WifiOff, Gauge, Navigation, User, Radio, Play, Square,
-  AlertTriangle, MapPin, Clock, Battery, Zap, Shield, Activity,
-  Eye, EyeOff, Flame, Layers,
+  AlertTriangle, MapPin, Clock, Zap, Shield, Activity,
+  Eye, EyeOff, Layers,
 } from "lucide-react";
 import {
   type Vehicle, connectVehicleWS, disconnectVehicleWS, api,
@@ -173,10 +173,10 @@ export default function TrackingPage() {
   const enRouteCount = vehicles.filter((v) => v.status === "en_route").length;
 
   return (
-    <div className="flex gap-3 h-[calc(100vh-7rem)]" style={{ fontFamily: "var(--font-display)" }}>
+    <div className="flex flex-col lg:flex-row gap-3 lg:h-[calc(100vh-7.5rem)]" style={{ fontFamily: "var(--font-display)" }}>
 
       {/* ══════ Left: Fleet Panel ══════ */}
-      <div className="w-[300px] shrink-0 flex flex-col overflow-hidden rounded-lg border border-[var(--color-outline-variant)] card-lifted">
+      <div className="w-full lg:w-[300px] max-h-[340px] lg:max-h-none shrink-0 flex flex-col overflow-hidden rounded-lg border border-[var(--color-outline-variant)] card-lifted order-2 lg:order-none">
 
         {/* Header */}
         <div className="px-4 pt-4 pb-3 flex items-center justify-between border-b border-[var(--color-outline-variant)]">
@@ -292,10 +292,10 @@ export default function TrackingPage() {
       </div>
 
       {/* ══════ Center: Map + Stats ══════ */}
-      <div className="flex-1 flex flex-col gap-3 min-w-0">
+      <div className="flex-1 flex flex-col gap-3 min-w-0 order-1 lg:order-none">
 
         {/* Top Stats Bar */}
-        <div className="grid grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
           {[
             { label: "Active Units", value: activeCount, icon: Activity, color: "#34C759" },
             { label: "Emergency", value: emergencyCount, icon: AlertTriangle, color: "#FF3B30" },
@@ -317,7 +317,7 @@ export default function TrackingPage() {
         </div>
 
         {/* Map Area */}
-        <div className="flex-1 relative rounded-lg overflow-hidden border border-[var(--color-outline-variant)]">
+        <div className="flex-1 relative min-h-[440px] rounded-lg overflow-hidden border border-[var(--color-outline-variant)]">
           <TacticalMap
             height="100%"
             vehicles={vehicles}
@@ -399,7 +399,7 @@ export default function TrackingPage() {
 
       {/* ══════ Right: Live Alerts Panel ══════ */}
       {simAlerts.length > 0 && (
-        <div className="w-[280px] shrink-0 flex flex-col overflow-hidden rounded-lg border border-[var(--color-outline-variant)] card-lifted animate-fade-in">
+        <div className="w-full lg:w-[280px] max-h-[360px] lg:max-h-none shrink-0 flex flex-col overflow-hidden rounded-lg border border-[var(--color-outline-variant)] card-lifted animate-fade-in order-3 lg:order-none">
           <div className="px-4 pt-4 pb-3 flex items-center justify-between border-b border-[var(--color-outline-variant)]">
             <div className="flex items-center gap-2">
               <Radio className="h-4 w-4 text-[var(--color-error)]" />

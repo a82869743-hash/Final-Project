@@ -35,6 +35,19 @@ function vehicleIcon(name: string): string {
   return "🚑";
 }
 
+/** Tags the map container with the zoom band so marker labels only show when they fit. */
+function ZoomClass() {
+  const map = useMap();
+  useEffect(() => {
+    const el = map.getContainer();
+    const apply = () => el.classList.toggle("tac-zoom-low", map.getZoom() < 8);
+    apply();
+    map.on("zoomend", apply);
+    return () => { map.off("zoomend", apply); };
+  }, [map]);
+  return null;
+}
+
 /* ── Dispatch data interface ── */
 interface DispatchData {
   vehicle: Vehicle;
@@ -177,6 +190,7 @@ export default function TacticalMap({
         style={{ height: "100%", width: "100%", zIndex: 0, background: "#0B0F19" }}>
         {/* Dark tactical tile layer */}
         <BaseTiles layerId="dark" />
+        <ZoomClass />
 
         <FitBounds vehicles={vehicles} selected={selected} />
         <FocusSelected selected={selected} />
@@ -284,7 +298,7 @@ export default function TacticalMap({
               {isDispatched && (
                 <Tooltip direction="top" offset={[0, -18]} permanent
                   className="font-bold !text-[10px] !border-0 !shadow-lg !bg-[#0B0F19] !text-[#00D4FF] !px-2 !py-1">
-                  ETA: {dispatch.eta} min
+                  ETA: {Number(dispatch.eta).toFixed(1)} min
                 </Tooltip>
               )}
             </Marker>
@@ -313,6 +327,10 @@ export default function TacticalMap({
           text-shadow: 0 1px 3px rgba(0,0,0,0.8); white-space: nowrap;
           letter-spacing: 0.04em;
         }
+        .tac-zoom-low .tac-label { opacity: 0; transform: translateY(-2px); pointer-events: none; }
+        .tac-zoom-low .tac-marker.selected .tac-label,
+        .tac-zoom-low .tac-marker.dispatched .tac-label { opacity: 1; transform: none; }
+        .tac-label { transition: opacity 0.2s ease, transform 0.2s ease; }
         .tac-marker.emergency .tac-glow { animation: emergencyPulse 1.5s infinite; opacity: 0.5; }
         .tac-marker.emergency .tac-body { border-color: #FF3B30; box-shadow: 0 0 16px rgba(255,59,48,0.6); }
         .tac-marker.selected .tac-body { border-color: #00D4FF; box-shadow: 0 0 16px rgba(0,212,255,0.6); transform: scale(1.15); }

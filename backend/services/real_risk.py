@@ -18,6 +18,8 @@ import math
 import os
 from datetime import datetime
 
+from services.clock import now_ist
+
 import numpy as np
 
 ML = os.path.join(os.path.dirname(__file__), "..", "ml")
@@ -77,7 +79,7 @@ def _severity(hour, weather, urban, speed_kmh, highway, vehicles, casualties, ju
     base = sm["base_rate_ksi"]
     if _sev is None:
         return base, base
-    now = datetime.now()
+    now = now_ist()
     dark = hour < 6 or hour >= 19
     light = (4 if urban else 6) if dark else 1
     mph = min([20, 30, 40, 50, 60, 70], key=lambda m: abs(m - speed_kmh / 1.609))
@@ -102,7 +104,7 @@ def assess(lat: float, lng: float, hour: int | None = None, weather: int = 0,
            speed_kmh: float | None = None, highway: bool | None = None, vehicles: int = 2,
            casualties: int = 1, junction: bool = False, pedestrian: bool = False) -> dict:
     _load()
-    hour = datetime.now().hour if hour is None else int(hour) % 24
+    hour = now_ist().hour if hour is None else int(hour) % 24
     weather = int(min(max(weather, 0), 3))
     city, prof, dist = nearest_city(lat, lng)
     in_city = dist <= COVERAGE_KM

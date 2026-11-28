@@ -17,6 +17,8 @@ import {
   Loader2,
   Building2,
   BrainCircuit,
+  Route,
+  X,
 } from "lucide-react";
 
 const navItems = [
@@ -25,6 +27,7 @@ const navItems = [
   { label: "Tracking", href: "/tracking", icon: MapPin },
   { label: "Hospitals", href: "/hospitals", icon: Building2 },
   { label: "Risk AI", href: "/risk", icon: BrainCircuit },
+  { label: "Fleet Planner", href: "/planner", icon: Route },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },
   { label: "Analyzer", href: "/analyzer", icon: Mic },
   { label: "Voice Command", href: "/voice", icon: Mic2 },
@@ -42,7 +45,9 @@ const stateConfig: Record<SystemState, { color: string; bg: string; label: strin
   connecting: { color: "#0ea5e9", bg: "rgba(14,165,233,0.06)", label: "Connecting to Tactical Services..." },
 };
 
-export default function Sidebar() {
+export const navigation = navItems;
+
+export default function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const pathname = usePathname();
   const [systemState, setSystemState] = useState<SystemState>("connecting");
   const [serviceCount, setServiceCount] = useState("—");
@@ -71,7 +76,10 @@ export default function Sidebar() {
 
           if (res.ok) {
             const data = await res.json();
-            const statuses = Object.values(data) as { status: string }[];
+            // Optional services (Whisper file transcription, weather feed) don't
+            // make the core system "degraded" when they're simply not configured
+            const statuses = (Object.values(data) as { status: string; optional?: boolean }[])
+              .filter((s) => !s.optional || s.status === "online");
             const onlineCount = statuses.filter((s) => s.status === "online").length;
             const total = statuses.length;
             if (!cancelled) {
@@ -93,7 +101,7 @@ export default function Sidebar() {
       // All retries exhausted
       if (!cancelled) {
         setSystemState("offline");
-        setServiceCount("0/4");
+        setServiceCount("0");
       }
     }
 
@@ -105,7 +113,15 @@ export default function Sidebar() {
   const state = stateConfig[systemState];
 
   return (
-    <aside className="fixed left-0 top-0 h-full w-[260px] flex flex-col z-40 border-r border-[var(--color-outline-variant)]" style={{ background: "var(--color-surface)" }}>
+    <>
+    {/* Mobile backdrop */}
+    <div onClick={onClose} aria-hidden
+      className={`fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-[2px] transition-opacity lg:hidden ${open ? "opacity-100" : "pointer-events-none opacity-0"}`} />
+    <aside className={`fixed left-0 top-0 h-full w-[260px] flex flex-col z-50 border-r border-[var(--color-outline-variant)] transition-transform duration-300 ease-out lg:translate-x-0 ${open ? "translate-x-0 shadow-[var(--shadow-ambient)]" : "-translate-x-full"}`} style={{ background: "var(--color-surface)" }}>
+      <button onClick={onClose} aria-label="Close menu"
+        className="absolute right-3 top-6 flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-on-surface-muted)] hover:bg-[var(--color-surface-container-low)] lg:hidden">
+        <X className="h-4 w-4" />
+      </button>
       {/* ── Brand ── */}
       <div className="flex items-center gap-3 px-6 py-6">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-primary-dim)] overflow-hidden shadow-lg">
@@ -122,7 +138,8 @@ export default function Sidebar() {
       </div>
 
       {/* ── Navigation ── */}
-      <nav className="flex-1 px-3 py-2 space-y-0.5">
+      <div className="px-6 pb-2"><div className="h-px bg-gradient-to-r from-transparent via-[var(--color-outline-variant)] to-transparent" /></div>
+      <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5">
         {navItems.map((item) => {
           const isActive =
             pathname === item.href || pathname?.startsWith(item.href + "/");
@@ -130,6 +147,8 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onClose}
+              aria-current={isActive ? "page" : undefined}
               className={`group flex items-center gap-3 rounded-lg px-4 py-2.5 text-[12px] font-medium transition-all duration-200
                 ${
                   isActive
@@ -182,5 +201,6 @@ export default function Sidebar() {
         )}
       </div>
     </aside>
+    </>
   );
 }

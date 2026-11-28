@@ -49,6 +49,7 @@ def _generate_vehicles(count: int) -> list[dict]:
             "driver": f"Crew {i:03d}",
             "destination": h[1] if moving else "",
             "_home": (h[4], h[5]),
+            "_home_name": h[1],
         })
     return vehicles
 
@@ -108,7 +109,8 @@ def _incidents_today() -> int:
         meta = real_risk._meta
         annual = sum(p["accidents_2022"] or 0 for p in meta["city_profiles"].values())
         prof = [card["india_national_time_profile_2018"][s] for s in card["slots"]]
-        now = datetime.now()
+        from services.clock import now_ist
+        now = now_ist()
         h = now.hour + now.minute / 60
         done = sum(prof[: int(h // 3)]) + prof[int(h // 3)] * ((h % 3) / 3)
         return int(annual / 365 * done)
@@ -152,30 +154,59 @@ def get_vehicles() -> list[Vehicle]:
     """Return all vehicles."""
     return [Vehicle(**{k: val for k, val in v.items() if not k.startswith("_")}) for v in _vehicles]
 
+_SIM_TICK_SECONDS = 2.0
+_last_sim_tick = 0.0
+
+
+def tick_simulation() -> None:
+    """Advance the shared fleet simulation at most once per tick interval.
+
+    Every WebSocket client and REST poll calls this; the time gate keeps the
+    fleet moving at the same speed no matter how many dashboards are open
+    (previously each client advanced it, so N tabs moved units N times faster)."""
+    global _last_sim_tick
+    import time
+    now = time.monotonic()
+    if now - _last_sim_tick < _SIM_TICK_SECONDS:
+        return
+    _last_sim_tick = now
+    simulate_vehicle_movement()
+
+
 def simulate_vehicle_movement():
     """
     Slightly move vehicles that are en_route or critical
     to simulate real-time movement. Called by the WebSocket loop.
     🚀 ML UPGRADE: Add realistic behavior loops based on time of day.
     """
-    now = datetime.utcnow()
-    hour = now.hour
+    from services.clock import now_ist
+    hour = now_ist().hour
     
     is_night = hour < 6 or hour >= 23
     is_peak = (8 <= hour <= 10) or (17 <= hour <= 19)
     
+    # Per-tick transition probabilities chosen so the fleet settles at a stable
+    # equilibrium (~25% off shift at night, ~7% by day) instead of draining.
+    p_off, p_on = (0.003, 0.009) if is_night else (0.0008, 0.010)
+    p_incident = 0.004 if is_peak else 0.0015
+
     for v in _vehicles:
-        # Simulate offline states dropping at night, coming back in day
-        if is_night and v["status"] == "available" and random.random() < 0.05:
+        if v["status"] == "available" and random.random() < p_off:
             v["status"] = "offline"
-        elif not is_night and v["status"] == "offline" and random.random() < 0.2:
-            v["status"] = "available"
-            
-        # Simulate huge incident spikes during peak hours affecting available units
-        if is_peak and v["status"] == "available" and random.random() < 0.02:
-            v["status"] = "critical"
-            v["speed"] = random.randint(60, 90)
-            
+            continue
+        if v["status"] == "offline":
+            if random.random() < p_on:
+                v["status"] = "available"
+            continue
+
+        # New incident near the unit's base hospital (en route, sometimes critical)
+        if v["status"] == "available" and random.random() < p_incident:
+            hlat, hlng = v.get("_home", (v["lat"], v["lng"]))
+            v["_target"] = (hlat + random.uniform(-0.03, 0.03), hlng + random.uniform(-0.03, 0.03))
+            v["status"] = "critical" if random.random() < 0.25 else "en_route"
+            v["speed"] = random.randint(45, 85)
+            v["destination"] = v.get("_home_name", "Incident response")
+
         if v["status"] in ("en_route", "critical"):
             # Drive toward the destination hospital; slower in peak traffic
             step = 0.0004 if is_peak else 0.0008
@@ -183,9 +214,12 @@ def simulate_vehicle_movement():
             dlat, dlng = tlat - v["lat"], tlng - v["lng"]
             dist = (dlat ** 2 + dlng ** 2) ** 0.5
             if dist < 0.002:
-                v["status"] = "on_scene"
+                # Pre-positioning moves end on standby, incident responses on scene
+                v["status"] = "available" if v.pop("_reposition", False) else "on_scene"
                 v["speed"] = 0
                 v.pop("_target", None)
+                if v["status"] == "available":
+                    v["destination"] = ""
                 continue
             import math
             v["lat"] += dlat / dist * step + random.uniform(-0.0001, 0.0001)
@@ -200,6 +234,7 @@ def simulate_vehicle_movement():
             if random.random() < clear_prob:
                 v["status"] = "available"
                 v["speed"] = 0
+                v["destination"] = ""
 
 def assign_vehicle(vehicle_id: str, destination: str, lat: float, lng: float) -> dict | None:
     """Assign a vehicle to an incident."""
@@ -209,5 +244,18 @@ def assign_vehicle(vehicle_id: str, destination: str, lat: float, lng: float) ->
             v["destination"] = destination
             v["_target"] = (lat, lng)
             v["speed"] = 60 + random.randint(0, 25)
+            return v
+    return None
+
+
+def reposition_vehicle(vehicle_id: str, city: str, lat: float, lng: float) -> dict | None:
+    """Send an available unit to stand by in another city (fleet pre-positioning)."""
+    for v in _vehicles:
+        if v["id"] == vehicle_id and v["status"] == "available":
+            v["status"] = "en_route"
+            v["destination"] = f"Standby: {city}"
+            v["_target"] = (lat + random.uniform(-0.01, 0.01), lng + random.uniform(-0.01, 0.01))
+            v["_reposition"] = True
+            v["speed"] = 70 + random.randint(0, 20)
             return v
     return None

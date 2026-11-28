@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import Link from "next/link";
 import {
   Ambulance,
   Clock,
@@ -8,7 +9,12 @@ import {
   ShieldAlert,
   BrainCircuit,
   RefreshCw,
-  WifiOff,
+  CloudSun,
+  CloudRain,
+  CloudFog,
+  CloudLightning,
+  ArrowUpRight,
+  Radar,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import StatCard from "@/components/ui/StatCard";
@@ -27,13 +33,13 @@ import AlertsList from "@/components/ui/AlertsList";
 import ActivityFeed from "@/components/ui/ActivityFeed";
 import PremiumAnalytics from "@/components/dashboard/PremiumAnalytics";
 import RadioScanner from "@/components/dashboard/RadioScanner";
-import { api, connectVehicleWS, disconnectVehicleWS, type DashboardStats, type Alert, type Vehicle, type PredictionResponse, type AnalyticsStats, type RiskZone } from "@/lib/api";
+import { api, connectVehicleWS, disconnectVehicleWS, type DashboardStats, type Alert, type Vehicle, type PredictionResponse, type AnalyticsStats, type RiskZone, type RiskNowResponse } from "@/lib/api";
 
 import { useDispatchContext } from "@/components/providers/DispatchProvider";
 
 // Add ErrorBoundary
 class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean}> {
-  constructor(props: any) {
+  constructor(props: { children: React.ReactNode }) {
     super(props);
     this.state = { hasError: false };
   }
@@ -106,6 +112,24 @@ const SkeletonCard = () => (
   </div>
 );
 
+const WX_ICONS = [CloudSun, CloudRain, CloudFog, CloudLightning];
+const RISK_TONE: Record<string, string> = { High: "#dc2626", Medium: "#d97706", Low: "#16a34a" };
+
+/** Current hour in India (the accident statistics are all in IST, whatever the browser's zone). */
+const istHour = () => Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: "Asia/Kolkata" }).format(new Date())) % 24;
+
+/** Great-circle distance in km */
+function km(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+  const r = Math.PI / 180;
+  const x = Math.sin(((b.lat - a.lat) * r) / 2) ** 2 +
+    Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(((b.lng - a.lng) * r) / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(x));
+}
+
+/** Region-filter names → names used in the MoRTH data / alert feed */
+const CITY_ALIASES: Record<string, string[]> = { Bangalore: ["Bengaluru", "Bangalore"] };
+const REGION_RADIUS_KM = 60;
+
 /* City centres used for the real-data risk forecast */
 const CITY_COORDS: Record<string, [number, number]> = {
   Delhi: [28.6139, 77.209], Mumbai: [19.076, 72.8777], Bangalore: [12.9716, 77.5946],
@@ -136,16 +160,25 @@ export default function DashboardPage() {
   const [wsState, setWsState] = useState<"CONNECTING" | "RECONNECTING" | "CONNECTED" | "FAILED" | "POLLING">("CONNECTING");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [riskNow, setRiskNow] = useState<RiskNowResponse | null>(null);
+  const fetchDataRef = useRef<() => Promise<void>>(async () => {});
 
   const CITIES = [
     "All India", "Delhi", "Mumbai", "Bangalore", "Chennai", "Kolkata", 
     "Hyderabad", "Ahmedabad", "Pune", "Jaipur", "Surat", "Lucknow", "Kanpur", "Nagpur", "Indore", "Bhopal"
   ];
 
-  // Derive filtered arrays
-  const filteredVehicles = vehicles.filter(v => selectedCity === "All India" || v.destination.includes(selectedCity) || v.name.includes(selectedCity));
-  // Let's filter alerts too. Alerts have location: "Sector X, City"
-  const filteredAlerts = alerts.filter(a => selectedCity === "All India" || a.location.includes(selectedCity) || a.title.includes(selectedCity));
+  // Region filter: vehicles by distance to the city centre, alerts by (aliased) city name
+  const filteredVehicles = useMemo(() => {
+    const c = CITY_COORDS[selectedCity];
+    if (!c) return vehicles;
+    return vehicles.filter((v) => km(v, { lat: c[0], lng: c[1] }) <= REGION_RADIUS_KM);
+  }, [vehicles, selectedCity]);
+  const filteredAlerts = useMemo(() => {
+    if (selectedCity === "All India") return alerts;
+    const names = CITY_ALIASES[selectedCity] ?? [selectedCity];
+    return alerts.filter((a) => names.some((n) => a.location.includes(n) || a.title.includes(n)));
+  }, [alerts, selectedCity]);
 
   useEffect(() => {
     // 1. Snapshot Caching: Instant load from storage
@@ -184,7 +217,7 @@ export default function DashboardPage() {
         sessionStorage.setItem("aegis_alerts", JSON.stringify(a));
         sessionStorage.setItem("aegis_vehicles", JSON.stringify(v));
         
-        if (an && (an as any).error) {
+        if (an && (an as AnalyticsStats & { error?: string }).error) {
            console.error("Analytics returned error:", an);
            setAnalytics(null);
            setError(true);
@@ -240,6 +273,7 @@ export default function DashboardPage() {
         setRefreshing(false);
       }
     }
+    fetchDataRef.current = fetchData;
     fetchData();
     // Refresh every 10 seconds
     const interval = setInterval(fetchData, 10000);
@@ -254,7 +288,7 @@ export default function DashboardPage() {
         await api.health();
         const latency = performance.now() - start;
         console.log(`[METRIC] Health check OK. Latency: ${latency.toFixed(2)}ms`);
-      } catch (err) {
+      } catch {
         console.log(`[METRIC] Health check failed.`);
       }
     };
@@ -271,7 +305,7 @@ export default function DashboardPage() {
         // Real-data engine: selected city (Delhi for "All India") at the forecast hour
         const c = CITY_COORDS[selectedCity] ?? CITY_COORDS.Delhi;
         const p = await api.predict({
-          hour: (new Date().getHours() + forecastOffset) % 24,
+          hour: (istHour() + forecastOffset) % 24,
           latitude: c[0],
           longitude: c[1],
         });
@@ -289,6 +323,15 @@ export default function DashboardPage() {
       clearInterval(interval);
     };
   }, [forecastOffset, selectedCity]);
+
+  // Live risk for all 53 cities (IST hour + live weather) — refresh every 5 min
+  useEffect(() => {
+    let active = true;
+    const load = () => api.getRiskNow().then((r) => active && setRiskNow(r)).catch(() => {});
+    load();
+    const t = setInterval(load, 300000);
+    return () => { active = false; clearInterval(t); };
+  }, []);
 
   // Fetch risk zones once on mount
   useEffect(() => {
@@ -318,88 +361,55 @@ export default function DashboardPage() {
     return () => disconnectVehicleWS();
   }, []);
 
-  // Compute Dispatch Logic
-  useEffect(() => {
-    if (!vehicles || vehicles.length === 0) return;
+  // AI dispatch recommendation: the city with the highest live expected deaths/hour
+  // (real-data engine) is the hotspot; the nearest available unit is proposed.
+  const hotspot = useMemo(() => {
+    const top = riskNow?.cities.find((c) => selectedCity === "All India" ||
+      (CITY_ALIASES[selectedCity] ?? [selectedCity]).includes(c.city)) ?? riskNow?.cities[0];
+    return top ? { lat: top.lat, lng: top.lng, city: top.city } : null;
+  }, [riskNow, selectedCity]);
 
-    // 1. Identify hotspot
-    const hotspotObj = vehicles.reduce((max, v) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return ((v as any).risk_score || 0) > ((max as any).risk_score || 0) ? v : max;
-    }, vehicles[0]);
-
-    const hotspot = { lat: hotspotObj.lat, lng: hotspotObj.lng };
-
-    // 2. Distance calc
-    const getDistance = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
-      return Math.sqrt(Math.pow(a.lat - b.lat, 2) + Math.pow(a.lng - b.lng, 2));
-    };
-
-    let bestVehicle: Vehicle | null = null;
-    let bestScore = Infinity;
-
-    vehicles.forEach(v => {
-      if (v.status === "offline") return;
-
-      const distance = getDistance(v, hotspot);
-      let priorityPenalty = 0;
-
-      if (v.status === "en_route") priorityPenalty = 0.002;
-      // @ts-expect-error fallback status
-      if (v.status === "busy") priorityPenalty = 0.005;
-
-      const score = distance + priorityPenalty;
-
-      if (score < bestScore) {
-        bestScore = score;
-        bestVehicle = v;
-      }
-    });
-
-    if (bestVehicle) {
-      const isSameAsLast = lastDispatchRef.current &&
-        lastDispatchRef.current.vId === (bestVehicle as Vehicle).id &&
-        lastDispatchRef.current.hLat === hotspot.lat &&
-        lastDispatchRef.current.hLng === hotspot.lng;
-
-      if (!isSameAsLast) {
-        lastDispatchRef.current = { vId: (bestVehicle as Vehicle).id, hLat: hotspot.lat, hLng: hotspot.lng };
-
-        const fetchETA = async () => {
-          setIsFetchingEta(true);
-          let eta = null;
-
-          try {
-            const vehicle = bestVehicle as Vehicle;
-            const url = `https://router.project-osrm.org/route/v1/driving/${vehicle.lng},${vehicle.lat};${hotspot.lng},${hotspot.lat}?overview=false`;
-            const res = await fetch(url);
-            const data = await res.json();
-
-            if (data.routes && data.routes.length > 0) {
-              eta = data.routes[0].duration / 60; // minutes
-            }
-          } catch (err) {
-            console.error("ETA fetch error", err);
-          }
-
-          // Fallback to Euclidean
-          if (eta === null) {
-            eta = bestScore * 1000;
-          }
-
-          setDispatch({
-            vehicle: bestVehicle!,
-            hotspot,
-            eta
-          });
-          setIsFetchingEta(false);
-        };
-
-        fetchETA();
-      }
+  const bestUnit = useMemo(() => {
+    if (!hotspot) return null;
+    let best: Vehicle | null = null;
+    let bestKm = Infinity;
+    for (const v of vehicles) {
+      if (v.status !== "available") continue;
+      const d = km(v, hotspot);
+      if (d < bestKm) { bestKm = d; best = v; }
     }
-  }, [vehicles]);
+    return best ? { vehicle: best, km: bestKm } : null;
+  }, [vehicles, hotspot]);
 
+  const computeDispatch = useCallback(async (unit: { vehicle: Vehicle; km: number }, spot: { lat: number; lng: number }) => {
+    setIsFetchingEta(true);
+    // Road distance ≈ 1.3 × straight line at ~40 km/h urban emergency speed
+    let eta = (unit.km * 1.3) / 40 * 60;
+    try {
+      const v = unit.vehicle;
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 6000);
+      const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${v.lng},${v.lat};${spot.lng},${spot.lat}?overview=false`, { signal: ctrl.signal });
+      clearTimeout(t);
+      const data = await res.json();
+      if (data.routes?.length) eta = data.routes[0].duration / 60;
+    } catch {
+      // keep the distance-based estimate
+    }
+    setDispatch({ vehicle: unit.vehicle, hotspot: spot, eta });
+    setIsFetchingEta(false);
+  }, [setDispatch]);
+
+  useEffect(() => {
+    if (!bestUnit || !hotspot) return;
+    const same = lastDispatchRef.current &&
+      lastDispatchRef.current.vId === bestUnit.vehicle.id &&
+      lastDispatchRef.current.hLat === hotspot.lat && lastDispatchRef.current.hLng === hotspot.lng;
+    if (same) return;
+    lastDispatchRef.current = { vId: bestUnit.vehicle.id, hLat: hotspot.lat, hLng: hotspot.lng };
+    const t = setTimeout(() => computeDispatch(bestUnit, hotspot), 0);
+    return () => clearTimeout(t);
+  }, [bestUnit, hotspot, computeDispatch]);
 
   // Compute fleet breakdown from vehicles
   const fleetBreakdown = [
@@ -424,6 +434,7 @@ export default function DashboardPage() {
   function handleManualRefresh() {
     setRefreshing(true);
     showToast("Refreshing dashboard data...", "info", 2000);
+    fetchDataRef.current();
   }
 
   return (
@@ -454,22 +465,40 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Global Command Center Filter ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 glass rounded-[var(--radius-lg)] p-4 shadow-sm border border-[var(--color-outline-variant)]">
-        <div>
-          <h2 className="text-[15px] font-[var(--font-display)] font-semibold text-[var(--color-on-surface)] flex items-center gap-2">
+      {/* ── Global Command Center ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_auto] items-center gap-4 glass rounded-[var(--radius-lg)] p-5 shadow-sm border border-[var(--color-outline-variant)]">
+        <div className="min-w-0">
+          <h2 className="text-[17px] font-[var(--font-display)] font-bold tracking-tight text-[var(--color-on-surface)] flex items-center gap-2">
+            <Radar className="h-4.5 w-4.5 text-[var(--color-primary)]" />
             Global Command Center
           </h2>
-          <p className="text-[12px] text-[var(--color-on-surface-muted)]">Live monitoring and dispatch matrix</p>
+          <p className="text-[12px] text-[var(--color-on-surface-muted)] mt-0.5">Live monitoring and dispatch matrix</p>
+          <div className="flex flex-wrap gap-2 mt-3">
+            {stats && (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-surface-container-low)] px-2.5 py-1 text-[10px] font-semibold text-[var(--color-on-surface)]">
+                <Activity className="h-3 w-3 text-[var(--color-info)]" />
+                ~{stats.incidents_today.toLocaleString()} accidents expected so far today
+                <span className="font-normal text-[var(--color-on-surface-muted)]">· MoRTH rate</span>
+              </span>
+            )}
+            {riskNow && (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-surface-container-low)] px-2.5 py-1 text-[10px] font-semibold text-[var(--color-on-surface)]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-error)]" /> {riskNow.counts.High} high
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-warning)] ml-1" /> {riskNow.counts.Medium} medium
+                <span className="font-normal text-[var(--color-on-surface-muted)]">· cities at risk now</span>
+              </span>
+            )}
+          </div>
         </div>
-        
+
         <SystemStatus wsState={wsState} error={error} lastUpdated={lastUpdated} isDemoMode={isDemoMode} />
-        <div className="flex items-center gap-3">
-          <label className="text-[11px] font-semibold tracking-wider text-[var(--color-on-surface-muted)] uppercase">Region</label>
-          <select 
+        <div className="flex items-center gap-3 lg:flex-col lg:items-stretch lg:gap-1.5">
+          <label htmlFor="region" className="text-[10px] font-bold tracking-[0.12em] text-[var(--color-on-surface-muted)] uppercase font-[var(--font-display)]">Region</label>
+          <select
+            id="region"
             value={selectedCity}
             onChange={(e) => setSelectedCity(e.target.value)}
-            className="bg-[var(--color-surface-container)] border border-[var(--color-outline-variant)] text-[var(--color-on-surface)] text-[13px] rounded-[var(--radius-md)] px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-shadow min-w-[140px]"
+            className="bg-[var(--color-surface)] border border-[var(--color-outline-variant)] text-[var(--color-on-surface)] text-[13px] rounded-[var(--radius-md)] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20 focus:border-[var(--color-primary)]/40 transition-shadow min-w-[160px] cursor-pointer"
           >
             {CITIES.map(city => (
               <option key={city} value={city}>{city}</option>
@@ -585,12 +614,49 @@ export default function DashboardPage() {
             <RadioScanner alerts={filteredAlerts} />
           </ErrorBoundary>
           <ErrorBoundary>
-            <ActivityFeed />
+            <ActivityFeed vehicles={vehicles} recentDispatches={analytics?.recent_dispatches ?? []} />
           </ErrorBoundary>
         </div>
 
         {/* Info Column */}
         <div className="space-y-4">
+          {/* Live Risk Now — real-data engine with live weather */}
+          <div className="card-lifted p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-[var(--font-display)] text-[13px] font-semibold tracking-tight text-[var(--color-on-surface)] flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 text-[var(--color-error)]" />
+                Live Risk Now
+              </h3>
+              <Link href="/planner" className="group flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-primary)] hover:underline">
+                Fleet plan <ArrowUpRight className="h-3 w-3 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+              </Link>
+            </div>
+            <p className="text-[10px] text-[var(--color-on-surface-muted)] mb-3">
+              {riskNow ? `${String(riskNow.hour_ist).padStart(2, "0")}:00 IST · ${riskNow.weather_live ? "live weather" : "weather offline"} · ranked by expected deaths/hr` : "Loading live risk…"}
+            </p>
+            <div className="space-y-1.5">
+              {!riskNow && Array.from({ length: 5 }, (_, i) => <div key={i} className="h-9 rounded-md shimmer" />)}
+              {riskNow?.cities.slice(0, 6).map((c, i) => {
+                const W = WX_ICONS[c.weather_class] ?? CloudSun;
+                return (
+                  <div key={c.city} className="flex items-center gap-2.5 rounded-md px-2.5 py-2 transition-colors hover:bg-[var(--color-surface-container-low)]">
+                    <span className="w-4 text-[10px] font-bold text-[var(--color-on-surface-muted)] tabular-nums">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12px] font-semibold text-[var(--color-on-surface)] truncate">{c.city}</div>
+                      <div className="text-[9px] text-[var(--color-on-surface-muted)] flex items-center gap-1">
+                        <W className="h-2.5 w-2.5" />{c.temperature_c != null ? `${Math.round(c.temperature_c)}°C ` : ""}{c.description ?? c.weather_label}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[11px] font-bold tabular-nums" style={{ color: RISK_TONE[c.risk_level] }}>{c.risk_level}</div>
+                      <div className="text-[9px] text-[var(--color-on-surface-muted)] tabular-nums">P{Math.round(c.percentile)}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* AI Prediction Panel */}
           {prediction && (
             <div className="card-lifted p-5 relative overflow-hidden">
@@ -657,8 +723,9 @@ export default function DashboardPage() {
                     <span className="font-[var(--font-display)] text-xl font-bold uppercase tracking-tight text-cyan-600">
                       {dispatch.vehicle.id}
                     </span>
-                    <p className="text-[11px] text-[var(--color-on-surface-muted)] mt-1 capitalize">
-                      Status: {dispatch.vehicle.status.replace("_", " ")}
+                    <p className="text-[11px] text-[var(--color-on-surface-muted)] mt-1">
+                      {dispatch.vehicle.name} → {hotspot?.city ?? "hotspot"}
+                      {bestUnit && bestUnit.vehicle.id === dispatch.vehicle.id ? ` · ${bestUnit.km.toFixed(1)} km` : ""}
                     </p>
                   </div>
                   <div className="text-right">
@@ -672,7 +739,7 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="text-center text-[12px] text-[var(--color-on-surface-muted)] py-2">
-                  Calculating optimal dispatch...
+                  {riskNow && !bestUnit ? "No available unit near the current hotspot" : "Calculating optimal dispatch..."}
                 </div>
               )}
             </div>
@@ -757,8 +824,8 @@ export default function DashboardPage() {
                     </td>
                   </tr>
                 ) : (
-                  analytics.recent_dispatches.map((row: any) => (
-                    <tr key={row.id} className="hover:bg-[rgba(255,255,255,0.02)] transition-colors">
+                  analytics.recent_dispatches.map((row) => (
+                    <tr key={row.id} className="hover:bg-[var(--color-surface-container-low)] transition-colors">
                       <td className="py-4 px-4 font-medium text-[var(--color-on-surface)] flex items-center gap-2">
                         <div className="h-2 w-2 rounded-full bg-[var(--color-primary)]"></div>
                         {row.vehicle_id}
@@ -773,7 +840,7 @@ export default function DashboardPage() {
                           row.risk_level === 'high' ? 'bg-[var(--color-warning)] text-black' :
                           'bg-[var(--color-surface-container-high)] text-[var(--color-on-surface)]'
                         }`}>
-                          {row.risk_level || 'Unknown'}
+                          {row.risk_level || row.priority || '—'}
                         </span>
                       </td>
                       <td className="py-4 px-4 text-right text-[12px] text-[var(--color-on-surface-muted)] whitespace-nowrap">

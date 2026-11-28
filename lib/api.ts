@@ -106,6 +106,8 @@ export interface DispatchResponse {
 export interface SubsystemStatus {
   status: "online" | "offline" | "degraded";
   latency: string;
+  /** Optional services don't count against overall system health */
+  optional?: boolean;
 }
 
 export interface HealthStatus {
@@ -113,6 +115,7 @@ export interface HealthStatus {
   ml_model: SubsystemStatus;
   supabase: SubsystemStatus;
   whisper: SubsystemStatus;
+  weather?: SubsystemStatus;
 }
 
 export interface AnalyticsStats {
@@ -282,6 +285,148 @@ export interface VoiceIntentResponse {
   pipeline: string;
 }
 
+
+// ── Live conditions, demand forecasting & fleet planning ──
+
+export interface CityWeather {
+  lat: number;
+  lng: number;
+  live: boolean;
+  temperature_c: number | null;
+  weather_code: number | null;
+  description: string;
+  weather_class: number;      // 0 clear, 1 rain, 2 fog, 3 storm/hail
+  weather_label: string;
+  visibility_m: number | null;
+  precipitation_mm: number | null;
+  wind_kmh: number | null;
+}
+
+export interface NearestWeather extends Partial<CityWeather> {
+  city: string;
+  distance_km: number;
+}
+
+export interface CityRiskNow {
+  city: string;
+  state: string;
+  lat: number;
+  lng: number;
+  risk_level: "Low" | "Medium" | "High";
+  percentile: number;
+  expected_deaths_per_hour: number;
+  expected_accidents_next_hour: number;
+  weather_class: number;
+  weather_label: string;
+  temperature_c: number | null;
+  description: string | null;
+}
+
+export interface RiskNowResponse {
+  generated_at: string;
+  hour_ist: number;
+  weather_live: boolean;
+  weather_source: string;
+  counts: { High: number; Medium: number; Low: number };
+  cities: CityRiskNow[];
+}
+
+export interface DemandHour {
+  time: string;
+  hour: string;
+  slot?: string;
+  expected_accidents: number;
+  expected_deaths?: number;
+  weather_class?: number;
+  weather_multiplier?: number;
+}
+
+export interface CityForecast {
+  city: string;
+  state: string;
+  lat: number;
+  lng: number;
+  hours: DemandHour[];
+  total_expected_accidents: number;
+  total_expected_deaths: number;
+  peak_hour: string;
+  fatality_rate_2022: number;
+  accidents_2023: number;
+  month_share: number[];
+  month_counts_2023: number[];
+  slot_share: number[];
+  slot_source: string;
+  weather_live: boolean;
+  weather_now: CityWeather | null;
+}
+
+export interface FleetMove {
+  from: string;
+  to: string;
+  units: number;
+  unit_ids: string[];
+  distance_km: number;
+  drive_min: number;
+}
+
+export interface FleetPlanCity {
+  city: string;
+  state: string;
+  lat: number;
+  lng: number;
+  expected_accidents: number;
+  expected_deaths: number;
+  demand_share: number;
+  current_units: number;
+  target_units: number;
+  delta: number;
+  after_units: number;
+  unmet: number;
+  accidents_per_unit: number | null;
+}
+
+export interface FleetPlan {
+  generated_at: string;
+  horizon_hours: number;
+  fleet: { total: number; deployable: number; busy: number; offline: number; outside_coverage: number };
+  expected_accidents_total: number;
+  expected_deaths_total: number;
+  coverage_now: number;
+  coverage_after: number;
+  moves: FleetMove[];
+  units_to_move: number;
+  unmet_units: number;
+  unmet_cities: string[];
+  max_reposition_km: number;
+  cities: FleetPlanCity[];
+  weather: { live: boolean; source: string; adverse_cities: string[] };
+  method: string;
+}
+
+export interface ShrinkageMetrics {
+  label: string;
+  validation: string;
+  best_k: number;
+  perplexity_raw_profile: number;
+  perplexity_shrunk_profile: number;
+  perplexity_prior_only: number | null;
+  improvement_vs_raw_pct: number;
+  deployed: boolean;
+}
+
+export interface DemandModelCard {
+  model_version: string;
+  formula: string;
+  sources: string[];
+  slots: string[];
+  months: string[];
+  national_month_share_2023: number[];
+  national_slot_share_2018: number[];
+  shrinkage: { month: ShrinkageMetrics; slot: ShrinkageMetrics };
+  total_accidents_2023: number;
+  cities_covered: number;
+}
+
 // ── Fetch helpers with timeout ──
 
 const FETCH_TIMEOUT = 10000; // 10 seconds timeout for snappy UI
@@ -380,6 +525,19 @@ export const api = {
     post<AccidentRiskResponse>("/predict-risk", body),
   getRiskZones: () => get<{ zones: RiskZone[]; total: number }>("/risk-zones"),
   getRiskModel: () => get<Record<string, unknown>>("/risk-model"),
+
+  // ── Live conditions, demand forecast & fleet pre-positioning ──
+  getRiskNow: () => get<RiskNowResponse>("/risk-now", { timeout: 20000 }),
+  getWeatherNearest: (lat: number, lng: number) =>
+    get<NearestWeather>(`/weather/nearest?lat=${lat}&lng=${lng}`, { timeout: 20000 }),
+  getCityForecast: (city: string, hours = 24) =>
+    get<CityForecast>(`/demand/forecast?city=${encodeURIComponent(city)}&hours=${hours}`, { timeout: 20000 }),
+  getNationalDemand: () => get<{ generated_at: string; hours: DemandHour[] }>("/demand/national"),
+  getDemandModel: () => get<DemandModelCard>("/demand/model"),
+  getFleetPlan: (horizon = 6) => get<FleetPlan>(`/fleet/plan?horizon=${horizon}`, { timeout: 20000 }),
+  applyFleetPlan: (horizon = 6) =>
+    post<{ applied: number; relocations: { vehicle_id: string; from: string; to: string; drive_min: number }[];
+      coverage_before: number; coverage_after: number }>(`/fleet/apply?horizon=${horizon}`, {}),
 
   // ── Live hospital monitoring ──
   getHospitals: (city?: string) =>

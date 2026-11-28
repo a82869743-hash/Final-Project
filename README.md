@@ -12,11 +12,12 @@ trained on **real government road-accident data**.
 
 | Page | What it does |
 |---|---|
-| **Dashboard** | Live fleet, alerts, real-data risk forecast per city, national risk map |
+| **Dashboard** | Live fleet, alerts, **live risk ranking of all 53 cities** (IST hour + live weather), AI dispatch recommendation, real activity feed, national risk map |
 | **Dispatch** | Assign an ambulance; the typed location is geocoded and ETA comes from real distance |
 | **Tracking** | Live ambulance positions over WebSocket |
 | **Hospitals** *(new)* | Live bed occupancy by ward (ICU, ventilators, HDU, trauma, general, pediatric, maternity, isolation, burns), oxygen, blood bank, ER wait, diversion status, capacity alerts, and a "best hospital for this patient" ranking |
-| **Risk AI** *(new)* | Interactive accident-risk predictor: city, hour, weather, road type, speed, vehicles, casualties. Explains every factor and includes the model card |
+| **Risk AI** | Interactive accident-risk predictor: city, hour, weather, road type, speed, vehicles, casualties. One click snaps to **live conditions** (IST hour + live weather). Explains every factor and includes the model card |
+| **Fleet Planner** *(new)* | Forecasts accidents per city for the next 3–24 h (NCRB 2023 + MoRTH, validated demand model), adjusts severity for live weather, and proposes and dispatches ambulance relocations to close coverage gaps |
 | **Analytics** | Real MoRTH/NCRB statistics for 53 cities: time-of-day and month patterns, deaths, YoY change, weather fatality, causes, 24-hour forecast, dispatch log |
 | **Analyzer** | Upload a call recording for transcription and severity |
 | **Voice Command** | Speak (English-India / Hindi), type, or upload a call. Intent and location are detected, the nearest ambulance is auto-dispatched, and hospitals are ranked by live beds |
@@ -29,6 +30,9 @@ See **[DATASETS.md](DATASETS.md)** for sources, the full data dictionary and hon
 - Severity model: XGBoost on **104,258 real police-reported collisions** (UK DfT STATS19 2023), ROC-AUC 0.647, 1.75× lift in the top decile
 - Indian risk: MoRTH 2022 city accidents and deaths, MoRTH 2020 city time-of-day profiles, MoRTH 2018 weather fatality ratios, NCRB ADSI
 - Master dataset: `backend/ml/india_road_accident_master.csv` (53 cities × 43 attributes)
+- Demand model: NCRB 2023 city monthly + MoRTH time-of-day profiles with empirical-Bayes shrinkage, validated by Poisson-thinning CV (`backend/ml/demand_model.json`)
+- Live weather: Open-Meteo (free, no key) for all 53 cities, cached for 10 minutes; the app falls back to clear-sky defaults and says so if it's unreachable
+- All time-of-day logic uses **Indian Standard Time**, whatever the server's time zone
 
 ## Run locally
 
@@ -60,6 +64,10 @@ Open http://localhost:3000. To rebuild the datasets and models from the raw gove
 
 ```bash
 cd backend && python ml/real_pipeline.py
+```
+
+```bash
+cd backend && python ml/demand_pipeline.py
 ```
 
 ## Configuration

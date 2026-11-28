@@ -5,7 +5,7 @@ XGBoost severity model trained on 104k real STATS19 collisions).
 """
 
 import threading
-from datetime import datetime
+from services.clock import now_ist
 
 from fastapi import APIRouter
 
@@ -31,7 +31,7 @@ async def predict(request: PredictionRequest):
     record = {
         "risk_score": pct, "lat": request.latitude, "lng": request.longitude,
         "time_of_day": f"{request.hour:02d}:00",
-        "day_of_week": "weekend" if datetime.now().weekday() >= 5 else "weekday",
+        "day_of_week": "weekend" if now_ist().weekday() >= 5 else "weekday",
         "weather": r["conditions"]["weather"], "predicted_level": level,
         "confidence": confidence, "model_version": "aegis_real_v3.0",
         "nearest_city": r["nearest_city"],

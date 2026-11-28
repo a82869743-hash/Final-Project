@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { Space_Grotesk, Inter } from "next/font/google";
 import "./globals.css";
 import "leaflet/dist/leaflet.css";
-import Sidebar from "@/components/layout/Sidebar";
-import Navbar from "@/components/layout/Navbar";
+import AppShell from "@/components/layout/AppShell";
 import { ToastProvider } from "@/components/ui/Toast";
 import { DispatchProvider } from "@/components/providers/DispatchProvider";
 import AegisCopilot from "@/components/copilot/AegisCopilot";
@@ -23,7 +22,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Sentinel — AI Emergency Response Command",
   description:
-    "AI-powered emergency dispatch and ambulance tracking command center",
+    "AI-powered emergency dispatch, ambulance tracking and accident-risk command center for Indian cities",
 };
 
 export default function RootLayout({
@@ -39,17 +38,8 @@ export default function RootLayout({
       <body className="h-full bg-[var(--color-background)] text-[var(--color-on-surface)] antialiased">
         <ToastProvider>
           <DispatchProvider>
-            <div className="flex h-full">
-              {/* Sidebar — fixed left */}
-              <Sidebar />
-
-              {/* Main area */}
-              <div className="flex flex-1 flex-col ml-[260px]">
-                <Navbar />
-                <main className="flex-1 overflow-y-auto p-6">{children}</main>
-              </div>
-              <AegisCopilot />
-            </div>
+            <AppShell>{children}</AppShell>
+            <AegisCopilot />
           </DispatchProvider>
         </ToastProvider>
       </body>

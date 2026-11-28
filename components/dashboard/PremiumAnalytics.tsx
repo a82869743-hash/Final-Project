@@ -120,7 +120,7 @@ export default function PremiumAnalytics({ vehicles, alerts }: PremiumAnalyticsP
               <BarChart data={severityData} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
                 <XAxis type="number" hide />
                 <YAxis dataKey="name" type="category" width={60} stroke="var(--color-on-surface-muted)" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip cursor={{ fill: 'var(--color-surface-container)' }} content={<CustomTooltip />} />
+                <Tooltip cursor={{ fill: 'var(--color-surface-container-low)' }} content={<CustomTooltip />} />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]} animationDuration={1500}>
                   {severityData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />

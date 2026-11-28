@@ -1,12 +1,16 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
 import {
   Bell, Search, User, X, AlertTriangle, Info, CheckCircle,
-  Wifi, Activity, CloudSun, Shield, Zap,
+  Wifi, WifiOff, Activity, CloudSun, CloudRain, CloudFog, CloudLightning, Shield, Menu, CornerDownLeft,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, type NearestWeather } from "@/lib/api";
+import { navigation } from "@/components/layout/Sidebar";
+
+const WX_ICONS = [CloudSun, CloudRain, CloudFog, CloudLightning];
+const DEFAULT_LOCATION = { lat: 28.6139, lng: 77.209 }; // New Delhi
 import { useToast } from "@/components/ui/Toast";
 
 const pageTitles: Record<string, string> = {
@@ -15,6 +19,7 @@ const pageTitles: Record<string, string> = {
   "/tracking": "Fleet Tracking",
   "/hospitals": "Hospital Monitoring",
   "/risk": "Risk Intelligence",
+  "/planner": "Fleet Planner",
   "/analytics": "Strategic Analytics",
   "/analyzer": "Call Analyzer",
   "/voice": "Voice Command",
@@ -37,8 +42,9 @@ const typeConfig = {
   success: { icon: CheckCircle, color: "#16a34a" },
 };
 
-export default function Navbar() {
+export default function Navbar({ onMenu }: { onMenu?: () => void }) {
   const pathname = usePathname();
+  const router = useRouter();
   const title = pageTitles[pathname ?? ""] ?? "Sentinel";
   const { showToast } = useToast();
   
@@ -50,6 +56,10 @@ export default function Navbar() {
   const [vehicleCount, setVehicleCount] = useState(0);
   const [incidentCount, setIncidentCount] = useState(0);
   const [aiOnline, setAiOnline] = useState(true);
+  const [weather, setWeather] = useState<NearestWeather | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -66,7 +76,7 @@ export default function Navbar() {
     async function fetchStats() {
       try {
         const [vehicles, alerts] = await Promise.all([api.getVehicles(), api.getAlerts()]);
-        setVehicleCount(vehicles.filter((v: any) => v.status !== "offline").length);
+        setVehicleCount(vehicles.filter((v) => v.status !== "offline").length);
         setIncidentCount(alerts.length);
         setAiOnline(true);
       } catch {
@@ -101,13 +111,51 @@ export default function Navbar() {
           });
           return newNotifs;
         });
-      } catch (err) {
+      } catch {
         // Silently fail if backend is unreachable
       }
     }
     fetchAlerts();
     const interval = setInterval(fetchAlerts, 10000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Live weather (Open-Meteo via backend) for the operator's city: uses the
+  // browser location only if permission was already granted, else New Delhi
+  useEffect(() => {
+    let cancelled = false;
+    async function load(lat: number, lng: number) {
+      try {
+        const w = await api.getWeatherNearest(lat, lng);
+        if (!cancelled) setWeather(w);
+      } catch { /* keep last value */ }
+    }
+    async function resolve() {
+      try {
+        const perm = await navigator.permissions?.query({ name: "geolocation" as PermissionName });
+        if (perm?.state === "granted") {
+          navigator.geolocation.getCurrentPosition(
+            (p) => load(p.coords.latitude, p.coords.longitude),
+            () => load(DEFAULT_LOCATION.lat, DEFAULT_LOCATION.lng),
+            { maximumAge: 600000, timeout: 8000 },
+          );
+          return;
+        }
+      } catch { /* permissions API unsupported */ }
+      load(DEFAULT_LOCATION.lat, DEFAULT_LOCATION.lng);
+    }
+    resolve();
+    const interval = setInterval(resolve, 600000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  // Close search suggestions when clicking outside
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) setSearchOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
   // Close panel when clicking outside
@@ -132,11 +180,30 @@ export default function Navbar() {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   }
 
+  const q = searchQuery.trim().toLowerCase();
+  const suggestions = q
+    ? navigation.filter((n) => n.label.toLowerCase().includes(q) || n.href.includes(q) ||
+        (pageTitles[n.href] ?? "").toLowerCase().includes(q))
+    : navigation;
+
+  function go(href: string) {
+    router.push(href);
+    setSearchQuery("");
+    setSearchOpen(false);
+  }
+
   function handleSearch(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && searchQuery.trim()) {
-      showToast(`Searching for: ${searchQuery}`, "info");
+    if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActiveIdx((i) => Math.max(i - 1, 0)); }
+    else if (e.key === "Escape") { setSearchOpen(false); (e.target as HTMLInputElement).blur(); }
+    else if (e.key === "Enter") {
+      const hit = suggestions[activeIdx] ?? suggestions[0];
+      if (hit) go(hit.href);
+      else if (q) showToast(`No page matches "${searchQuery}"`, "info");
     }
   }
+
+  const WxIcon = WX_ICONS[weather?.weather_class ?? 0] ?? CloudSun;
 
   function handleProfileClick() {
     showToast("Profile settings coming soon", "info");
@@ -145,9 +212,9 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-30 border-b border-[var(--color-outline-variant)]" style={{ background: "var(--color-surface)" }}>
       {/* ── Global Status Bar ── */}
-      <div className="flex items-center justify-between px-6 py-1.5 border-b border-[var(--color-outline-variant)]" style={{ background: "var(--color-surface-container-low)" }}>
+      <div className="flex items-center justify-between px-4 sm:px-6 py-1.5 border-b border-[var(--color-outline-variant)]" style={{ background: "var(--color-surface-container-low)" }}>
         <div className="flex items-center gap-4">
-          <span className="text-[10px] font-mono font-bold text-[var(--color-on-surface-muted)] tracking-wider">{time}</span>
+          <span className="text-[10px] font-mono font-bold text-[var(--color-on-surface-muted)] tracking-wider tabular-nums" suppressHydrationWarning>{time}</span>
           <div className="h-3 w-px bg-[var(--color-outline-variant)]" />
           <div className="flex items-center gap-1.5">
             <span className={`h-1.5 w-1.5 rounded-full ${aiOnline ? "bg-[var(--color-success)]" : "bg-[var(--color-error)]"} animate-pulse`} />
@@ -157,53 +224,75 @@ export default function Navbar() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5 text-[9px] font-bold tracking-wider text-[var(--color-on-surface-muted)] uppercase">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className="hidden sm:flex items-center gap-1.5 text-[9px] font-bold tracking-wider text-[var(--color-on-surface-muted)] uppercase">
             <Activity className="h-3 w-3 text-[var(--color-info)]" />
             <span>Vehicles:</span>
             <span className="text-[var(--color-on-surface)]">{vehicleCount}</span>
           </div>
-          <div className="h-3 w-px bg-[var(--color-outline-variant)]" />
-          <div className="flex items-center gap-1.5 text-[9px] font-bold tracking-wider text-[var(--color-on-surface-muted)] uppercase">
+          <div className="hidden sm:block h-3 w-px bg-[var(--color-outline-variant)]" />
+          <div className="hidden md:flex items-center gap-1.5 text-[9px] font-bold tracking-wider text-[var(--color-on-surface-muted)] uppercase">
             <Shield className="h-3 w-3 text-[var(--color-warning)]" />
             <span>Incidents:</span>
             <span className="text-[var(--color-on-surface)]">{incidentCount}</span>
           </div>
-          <div className="h-3 w-px bg-[var(--color-outline-variant)]" />
-          <div className="flex items-center gap-1.5 text-[9px] font-bold tracking-wider text-[var(--color-on-surface-muted)] uppercase">
-            <CloudSun className="h-3 w-3 text-[var(--color-warning)]" />
-            <span>32°C</span>
+          <div className="hidden md:block h-3 w-px bg-[var(--color-outline-variant)]" />
+          <div className="flex items-center gap-1.5 text-[9px] font-bold tracking-wider text-[var(--color-on-surface-muted)] uppercase"
+            title={weather?.live ? `${weather.description} · live from Open-Meteo` : "Live weather unavailable"}>
+            <WxIcon className="h-3 w-3 text-[var(--color-warning)]" />
+            <span className="tabular-nums">{weather?.temperature_c != null ? `${Math.round(weather.temperature_c)}°C` : "—"}</span>
+            {weather?.city && <span className="hidden lg:inline text-[var(--color-on-surface-muted)]">{weather.city}</span>}
           </div>
           <div className="h-3 w-px bg-[var(--color-outline-variant)]" />
           <div className="flex items-center gap-1.5 text-[9px] font-bold tracking-wider text-[var(--color-on-surface-muted)] uppercase">
-            <Wifi className="h-3 w-3 text-[var(--color-success)]" />
-            <span>Connected</span>
+            {aiOnline ? <Wifi className="h-3 w-3 text-[var(--color-success)]" /> : <WifiOff className="h-3 w-3 text-[var(--color-error)]" />}
+            <span className={aiOnline ? "" : "text-[var(--color-error)]"}>{aiOnline ? "Connected" : "Reconnecting"}</span>
           </div>
         </div>
       </div>
 
       {/* ── Main Navbar ── */}
-      <div className="flex h-14 items-center justify-between px-6">
+      <div className="flex h-14 items-center justify-between gap-3 px-4 sm:px-6">
         {/* Page Title */}
-        <div>
-          <h2 className="font-[var(--font-display)] text-[15px] font-bold tracking-tight text-[var(--color-on-surface)]">
+        <div className="flex items-center gap-2 min-w-0">
+          <button onClick={onMenu} aria-label="Open menu"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--color-on-surface-muted)] hover:bg-[var(--color-surface-container-low)] lg:hidden">
+            <Menu className="h-4 w-4" />
+          </button>
+          <h2 className="truncate font-[var(--font-display)] text-[15px] font-bold tracking-tight text-[var(--color-on-surface)]">
             {title}
           </h2>
         </div>
 
         {/* Right Controls */}
         <div className="flex items-center gap-2">
-          {/* Search */}
-          <div className="relative mr-2">
+          {/* Search — jump to any page */}
+          <div className="relative mr-1 sm:mr-2 hidden sm:block" ref={searchRef}>
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-on-surface-muted)]" />
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => { setSearchQuery(e.target.value); setActiveIdx(0); setSearchOpen(true); }}
+              onFocus={() => setSearchOpen(true)}
               onKeyDown={handleSearch}
-              placeholder="Search..."
+              placeholder="Jump to…"
+              aria-label="Search pages"
               className="h-8 w-48 rounded-lg bg-[var(--color-surface-container-low)] border border-[var(--color-outline-variant)] pl-9 pr-4 text-[12px] text-[var(--color-on-surface)] placeholder:text-[var(--color-on-surface-muted)] outline-none transition-colors focus:border-[var(--color-primary)]/40 focus:shadow-[0_0_0_1px_rgba(0,103,127,0.15)]"
             />
+            {searchOpen && (
+              <div className="absolute right-0 top-10 w-60 rounded-lg border border-[var(--color-outline-variant)] bg-[var(--color-surface)] p-1 shadow-[var(--shadow-ambient)] animate-fade-in z-50">
+                {suggestions.length === 0 ? (
+                  <div className="px-3 py-3 text-[11px] text-[var(--color-on-surface-muted)]">No matching page</div>
+                ) : suggestions.map((n, i) => (
+                  <button key={n.href} onMouseDown={(e) => { e.preventDefault(); go(n.href); }} onMouseEnter={() => setActiveIdx(i)}
+                    className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[12px] transition-colors ${i === activeIdx ? "bg-[var(--color-primary)]/8 text-[var(--color-primary)]" : "text-[var(--color-on-surface)]"}`}>
+                    <n.icon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="flex-1">{n.label}</span>
+                    {i === activeIdx && <CornerDownLeft className="h-3 w-3 opacity-60" />}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Notifications */}

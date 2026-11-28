@@ -178,9 +178,9 @@ export default function DispatchPage() {
       </div>
 
       {/* ── Filters ── */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         {/* Search */}
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative flex-1 sm:max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-on-surface-muted)]" />
           <input
             type="text"
@@ -192,12 +192,12 @@ export default function DispatchPage() {
         </div>
 
         {/* Status pills */}
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           {["all", "available", "en_route", "on_scene", "critical", "offline"].map((s) => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
-              className={`rounded-full px-3 py-1.5 text-[11px] font-medium transition-all ${
+              className={`rounded-full px-3 py-1.5 text-[11px] font-medium whitespace-nowrap transition-all ${
                 statusFilter === s
                   ? "bg-[var(--color-primary)] text-white shadow-[var(--shadow-glow-cyan)]"
                   : "bg-[var(--color-surface-container-low)] text-[var(--color-on-surface-muted)] hover:bg-[var(--color-surface-container-high)]"

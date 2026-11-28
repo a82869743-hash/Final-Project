@@ -23,6 +23,12 @@ trained on **real government road-accident data**.
 | **Voice Command** | Speak (English-India / Hindi), type, or upload a call. Intent and location are detected, the nearest ambulance is auto-dispatched, and hospitals are ranked by live beds |
 | **Video Intel** | Upload CCTV/dashcam clips for vehicle/person detection, accident classification, geotagging and one-click dispatch |
 
+## Project documents
+
+- [`docs/Sentinel_Final_Jury.pptx`](docs/Sentinel_Final_Jury.pptx) / [PDF](docs/Sentinel_Final_Jury.pdf): final jury presentation (speaker notes on every slide; uses the free Manrope font)
+- [`docs/Sentinel_Project_Report.docx`](docs/Sentinel_Project_Report.docx) / [PDF](docs/Sentinel_Project_Report.pdf): project report in the Navrachana University format
+- [`docs/screenshots/`](docs/screenshots): screenshots of every page
+
 ## Data & models
 
 See **[DATASETS.md](DATASETS.md)** for sources, the full data dictionary and honest model metrics.
